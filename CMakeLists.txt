@@ -14,7 +14,7 @@ add_subdirectory(bit)
 # Optional: Create library target that includes all utilities
 add_library(EmbeddedUtilities INTERFACE)
 target_include_directories(EmbeddedUtilities INTERFACE 
-    ${CMAKE_CURRENT_SOURCE_DIR}/eLog
-    ${CMAKE_CURRENT_SOURCE_DIR}/ring
-    ${CMAKE_CURRENT_SOURCE_DIR}/bit
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/eLog>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/ring>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/bit>
 )

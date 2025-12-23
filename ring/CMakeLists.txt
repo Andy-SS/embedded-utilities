@@ -1,6 +1,6 @@
-add_library(ring INTERFACE)
+add_library(ring STATIC ring.c)
 
 target_include_directories(ring
-    INTERFACE
+    PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
