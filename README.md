@@ -5,7 +5,8 @@ A collection of lightweight, modular C utilities for embedded firmware developme
 ## Features
 
 - **eLog** - Efficient logging system with configurable levels
-- **Ring Buffer** - Circular buffer implementation for data streaming
+- **Ring** - Circular buffer implementation for data streaming
+- **Bit** - Bit manipulation utilities
 - Additional utilities for common firmware tasks
 
 ## Getting Started
@@ -20,35 +21,55 @@ cmake ..
 make
 ```
 
-### Usage Example
+### Quick Usage
 
+**Logging with eLog:**
 ```c
-#include "elog.h"
-#include "ringbuffer.h"
+#include "eLog.h"
 
 int main(void) {
-    elog_init();
-    elog_info("System started");
+    LOG_INIT_WITH_CONSOLE();
     
-    // Your code here
+    ELOG_INFO(ELOG_MD_MAIN, "System started");
+    ELOG_DEBUG(ELOG_MD_MAIN, "Debug message");
+    ELOG_ERROR(ELOG_MD_MAIN, "Error occurred");
     
     return 0;
 }
 ```
 
+See [eLog documentation](docs/ELOG.md) for advanced features like module-based logging, multiple log levels, subscribers, and thread safety.
+
+**Ring Buffer:**
+```c
+#include "ring.h"
+
+// Create and use circular buffer for data streaming
+```
+
+**Bit Operations:**
+```c
+#include "bit.h"
+
+// Efficient bit manipulation utilities
+```
+
 ## Documentation
 
 - [eLog Documentation](docs/ELOG.md)
-- [Ring Buffer Documentation](docs/RINGBUFFER.md)
+- [Ring Documentation](docs/RING.md)
+- [Bit Documentation](docs/BIT.md)
 
 ## Directory Structure
 
 ```
-├── src/              # Source implementations
-├── include/          # Public headers
-├── tests/            # Unit tests
+├── eLog/             # Logging utilities
+├── ring/             # Ring buffer implementation
+├── bit/              # Bit manipulation utilities
+├── docs/             # Documentation
 ├── examples/         # Usage examples
-└── docs/             # Documentation
+├── tests/            # Unit tests
+└── README.md         # This file
 ```
 
 ## License
