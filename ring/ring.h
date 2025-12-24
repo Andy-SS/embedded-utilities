@@ -1,7 +1,7 @@
 /***********************************************************
  * @file	ring.h
  * @author	Andy Chen (andy.chen@respiree.com)
- * @version	0.01
+ * @version	0.02
  * @date	2025-04-09
  * @brief
  * **********************************************************
@@ -16,13 +16,12 @@
 #include <stdint.h>
 #include <stddef.h>
 
-
-#define USE_RTOS_MUTEX 1  // Set to 1 to enable RTOS mutex locking
+#define RING_USE_RTOS_MUTEX 1  /* Set to 1 to enable RTOS mutex support */
 
 typedef struct {
   void *buffer;        // Pointer to the buffer (allocated elsewhere or dynamically)
-  #if USE_RTOS_MUTEX
-  void *mutex;         // Pointer to mutex for thread safety (external mutex provided by user)
+  #if RING_USE_RTOS_MUTEX
+  void *mutex;         // Per-instance mutex handle (created during Init)
   #endif
   uint32_t head;       // Write index
   uint32_t tail;       // Read index
@@ -31,6 +30,37 @@ typedef struct {
   size_t element_size; // Size of each element in bytes
   bool owns_buffer;    // true if buffer was dynamically allocated and should be freed
 } RingBuffer_t;
+
+#if RING_USE_RTOS_MUTEX
+/* Critical section operation result codes */
+typedef enum {
+  RING_CS_OK = 0,
+  RING_CS_ERROR,
+  RING_CS_TIMEOUT
+} ring_cs_result_t;
+
+/* Critical section callback function prototypes - per mutex instance */
+/* Each ring buffer has its own mutex handle passed as parameter */
+typedef ring_cs_result_t (*ring_cs_enter_fn)(void *mutex);
+typedef ring_cs_result_t (*ring_cs_exit_fn)(void *mutex);
+typedef void* (*ring_cs_create_fn)(void);  /* Create and return new mutex */
+typedef void (*ring_cs_destroy_fn)(void *mutex);  /* Destroy mutex */
+
+/* Critical section callbacks structure */
+typedef struct {
+  ring_cs_create_fn create;    /* Create a new mutex for a ring buffer */
+  ring_cs_destroy_fn destroy;  /* Destroy a ring buffer's mutex */
+  ring_cs_enter_fn enter;      /* Lock a specific mutex */
+  ring_cs_exit_fn exit;        /* Unlock a specific mutex */
+} ring_cs_callbacks_t;
+
+/**
+ * @brief Register critical section callbacks with ring buffer
+ * @param callbacks: Pointer to callback structure (NULL for no synchronization)
+ * @return true on success
+ */
+bool RingBuffer_RegisterCriticalSectionCallbacks(const ring_cs_callbacks_t *callbacks);
+#endif /* RING_USE_RTOS_MUTEX */
 
 /**
  * @brief Initializes a ring buffer.
@@ -71,51 +101,6 @@ void RingBuffer_Init(RingBuffer_t *rb, void *buffer, uint32_t size, size_t eleme
  * @note Call RingBuffer_Destroy() to properly clean up the ring buffer and free allocated memory.
  */
 bool RingBuffer_InitDynamic(RingBuffer_t *rb, uint32_t size, size_t element_size);
-
-#if USE_RTOS_MUTEX
-/**
- * @brief Attaches an external RTOS mutex to the ring buffer for thread-safe operations.
- *
- * This function associates a pre-created RTOS mutex with the ring buffer.
- * The caller is responsible for protecting ring buffer operations using critical sections
- * (ENTER_CRITICAL_SECTION / EXIT_CRITICAL_SECTION) when accessing from multiple threads.
- *
- * @param rb Pointer to the RingBuffer_t structure.
- * @param mutex Pointer to the RTOS mutex handle (e.g., TX_MUTEX* for ThreadX).
- *              The mutex must be created before calling this function.
- *
- * @return true if mutex was successfully attached.
- * @return false if rb is NULL or invalid.
- *
- * @note The caller is responsible for creating and destroying the mutex.
- * @note The mutex is stored but not used internally - use it with your critical section macros.
- * @note Example for ThreadX:
- *       TX_MUTEX my_mutex;
- *       tx_mutex_create(&my_mutex, "ring_mutex", TX_INHERIT);
- *       RingBuffer_AttachMutex(&ring, &my_mutex);
- *
- *       // Usage in code:
- *       ENTER_CRITICAL_SECTION(ring.mutex);
- *       RingBuffer_Write(&ring, &data);
- *       EXIT_CRITICAL_SECTION(ring.mutex);
- */
-bool RingBuffer_AttachMutex(RingBuffer_t *rb, void *mutex);
-
-/**
- * @brief Detaches the RTOS mutex from the ring buffer.
- *
- * This function removes the attached mutex from the ring buffer.
- *
- * @param rb Pointer to the RingBuffer_t structure.
- *
- * @return true if mutex was successfully detached.
- * @return false if rb is NULL or no mutex was attached.
- *
- * @note The mutex itself is not destroyed - the caller is responsible for cleaning it up.
- */
-bool RingBuffer_DetachMutex(RingBuffer_t *rb);
-
-#endif /* USE_RTOS_MUTEX */
 
 /**
  * @brief Writes data into the ring buffer.

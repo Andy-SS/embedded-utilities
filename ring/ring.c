@@ -1,14 +1,13 @@
 /***********************************************************
  * @file	ring.c
  * @author	Andy Chen (andy.chen@respiree.com)
- * @version	0.01
+ * @version	0.02
  * @date	2025-04-09
  * @brief
  * **********************************************************
  * @copyright Copyright (c) 2025 Respiree. All rights reserved.
  *
  ************************************************************/
-#include "tx_api.h"
 #include "ring.h"
 #include <string.h>
 #include <stdio.h>
@@ -16,127 +15,50 @@
 #include <stdbool.h>
 #include <stdlib.h>
 
+#if RING_USE_RTOS_MUTEX
+static ring_cs_callbacks_t *s_cs_callbacks = NULL;
 
-// ESP-IDF Critical Section Implementation
-// #ifndef ESP_IDF_VERSION
-// #define ESP_IDF_VERSION
-// #endif
-
-#ifdef ESP_IDF_VERSION
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-
-// For ESP32 dual-core systems, use portMUX_TYPE for thread-safe operations
-
-// ISR-safe critical sections for BLE data processing
+/* NEW: Simple callback-based macros accepting mutex parameter */
+#ifdef ENTER_CRITICAL_SECTION
+#undef ENTER_CRITICAL_SECTION
+#endif
 #define ENTER_CRITICAL_SECTION(mutex) do { \
-    if (xPortInIsrContext()) { \
-        portENTER_CRITICAL_ISR(mutex); \
-    } else { \
-        portENTER_CRITICAL(mutex); \
-    } \
+  if (s_cs_callbacks && s_cs_callbacks->enter && (mutex)) { \
+    s_cs_callbacks->enter(mutex); \
+  } \
 } while(0)
 
+#ifdef EXIT_CRITICAL_SECTION
+#undef EXIT_CRITICAL_SECTION
+#endif
 #define EXIT_CRITICAL_SECTION(mutex) do { \
-    if (xPortInIsrContext()) { \
-        portEXIT_CRITICAL_ISR(mutex); \
-    } else { \
-        portEXIT_CRITICAL(mutex); \
-    } \
+  if (s_cs_callbacks && s_cs_callbacks->exit && (mutex)) { \
+    s_cs_callbacks->exit(mutex); \
+  } \
 } while(0)
-
-// Debug version with timeout detection
-#ifdef CONFIG_RING_BUFFER_DEBUG
-#define RING_BUFFER_CRITICAL_TIMEOUT_MS 1000
-extern uint32_t ring_buffer_critical_start_time;
-
-#define ENTER_CRITICAL_SECTION_DEBUG() do { \
-    ring_buffer_critical_start_time = xTaskGetTickCount() * portTICK_PERIOD_MS; \
-    ENTER_CRITICAL_SECTION(); \
-} while(0)
-
-#define EXIT_CRITICAL_SECTION_DEBUG() do { \
-    EXIT_CRITICAL_SECTION(); \
-    uint32_t duration = (xTaskGetTickCount() * portTICK_PERIOD_MS) - ring_buffer_critical_start_time; \
-    if (duration > RING_BUFFER_CRITICAL_TIMEOUT_MS) { \
-        ESP_LOGW("RingBuffer", "Critical section held for %d ms", duration); \
-    } \
-} while(0)
-#endif
-#elif defined(TX_API_H) // ThreadX Critical Section Implementation
-#include "stm32wbxx.h"
-// Simple critical section using CMSIS for STM32
-// This disables interrupts and saves the interrupt state for restoration
-#if defined(ENTER_CRITICAL_SECTION)
-#undef ENTER_CRITICAL_SECTION
-#endif
-#if defined(EXIT_CRITICAL_SECTION)
-#undef EXIT_CRITICAL_SECTION
-#endif
-// ThreadX Critical Section Implementation
-#include "tx_api.h"
-
-// ThreadX mutex-based critical sections with proper error handling
-#if defined(ENTER_CRITICAL_SECTION)
-#undef ENTER_CRITICAL_SECTION
-#endif
-#if defined(EXIT_CRITICAL_SECTION)
-#undef EXIT_CRITICAL_SECTION
-#endif
 
 /**
- * @brief Acquire mutex with timeout
- * @param mutex Pointer to TX_MUTEX
- * @return true if acquired successfully, false on timeout
+ * @brief Register critical section callbacks with ring buffer
+ * @param callbacks: Pointer to callback structure (NULL for no synchronization)
+ * @return true on success
  */
-static inline bool _ring_mutex_lock(void *mutex) {
-    if (mutex == NULL) {
-        return false;
-    }
-    UINT status = tx_mutex_get((TX_MUTEX *)mutex, TX_WAIT_FOREVER);
-    return (status == TX_SUCCESS);
+bool RingBuffer_RegisterCriticalSectionCallbacks(const ring_cs_callbacks_t *callbacks)
+{
+  s_cs_callbacks = (ring_cs_callbacks_t *)callbacks;
+  return true;
 }
-
-/**
- * @brief Release mutex
- * @param mutex Pointer to TX_MUTEX
- * @return true if released successfully
- */
-static inline bool _ring_mutex_unlock(void *mutex) {
-    if (mutex == NULL) {
-        return false;
-    }
-    UINT status = tx_mutex_put((TX_MUTEX *)mutex);
-    return (status == TX_SUCCESS);
-}
-
-#define ENTER_CRITICAL_SECTION(mutex) _ring_mutex_lock(mutex)
-#define EXIT_CRITICAL_SECTION(mutex) _ring_mutex_unlock(mutex)
 
 #else
-// For other platforms or testing, define empty macros
-#warning "Ring buffer critical sections disabled - not thread-safe!"
-#define ENTER_CRITICAL_SECTION() 
+/* No-op macros if no RTOS mutex support */
+#ifndef ENTER_CRITICAL_SECTION
+#define ENTER_CRITICAL_SECTION()
+#endif
+
+#ifndef EXIT_CRITICAL_SECTION
 #define EXIT_CRITICAL_SECTION()
 #endif
 
-// ESP-IDF specific includes
-#ifdef ESP_IDF_VERSION
-#include "esp_log.h"
-static const char *TAG = "RingBuffer";
-
-// Define the mutex for critical sections
-portMUX_TYPE ring_buffer_mux = portMUX_INITIALIZER_UNLOCKED;
-
-#ifdef CONFIG_RING_BUFFER_DEBUG
-uint32_t ring_buffer_critical_start_time = 0;
-#endif
-
-#elif defined(TX_API_H)
-// ThreadX specific includes
-#include "tx_api.h"
-
-#endif
+#endif /* RING_USE_RTOS_MUTEX */
 
 // Initialize the ring buffer
 void RingBuffer_Init(RingBuffer_t *rb, void *buffer, uint32_t size, size_t element_size) {
@@ -147,8 +69,12 @@ void RingBuffer_Init(RingBuffer_t *rb, void *buffer, uint32_t size, size_t eleme
   rb->count = 0;          // Initialize count to 0 (empty)
   rb->element_size = element_size;
   rb->owns_buffer = false;  // External buffer, not owned by ring buffer
-  #if USE_RTOS_MUTEX
+  #if RING_USE_RTOS_MUTEX
   rb->mutex = NULL;
+  /* Create a new mutex for this ring buffer instance */
+  if (s_cs_callbacks && s_cs_callbacks->create) {
+    rb->mutex = s_cs_callbacks->create();
+  }
   #endif
 }
 
@@ -179,8 +105,12 @@ bool RingBuffer_InitDynamic(RingBuffer_t *rb, uint32_t size, size_t element_size
   rb->element_size = element_size;
   rb->owns_buffer = true;  // We own this buffer and will free it
 
-  #if USE_RTOS_MUTEX
+  #if RING_USE_RTOS_MUTEX
   rb->mutex = NULL;
+  /* Create a new mutex for this ring buffer instance */
+  if (s_cs_callbacks && s_cs_callbacks->create) {
+    rb->mutex = s_cs_callbacks->create();
+  }
   #endif
   
 #ifdef ESP_IDF_VERSION
@@ -190,33 +120,6 @@ bool RingBuffer_InitDynamic(RingBuffer_t *rb, uint32_t size, size_t element_size
   
   return true;
 }
-
-#if USE_RTOS_MUTEX
-/**
- * @brief Attaches an external RTOS mutex to the ring buffer
- */
-bool RingBuffer_AttachMutex(RingBuffer_t *rb, void *mutex) {
-  if (rb == NULL) {
-    return false;
-  }
-  rb->mutex = mutex;
-  return true;
-}
-
-/**
- * @brief Detaches the RTOS mutex from the ring buffer
- */
-bool RingBuffer_DetachMutex(RingBuffer_t *rb) {
-  if (rb == NULL) {
-    return false;
-  }
-  if (rb->mutex == NULL) {
-    return false;
-  }
-  rb->mutex = NULL;
-  return true;
-}
-#endif /* USE_RTOS_MUTEX */
 
 // Destroy ring buffer and free dynamically allocated memory
 void RingBuffer_Destroy(RingBuffer_t *rb) {
@@ -241,7 +144,11 @@ void RingBuffer_Destroy(RingBuffer_t *rb) {
   rb->count = 0;
   rb->element_size = 0;
   rb->owns_buffer = false;
-  #if USE_RTOS_MUTEX
+  #if RING_USE_RTOS_MUTEX
+  // Destroy the mutex if it exists
+  if (rb->mutex && s_cs_callbacks && s_cs_callbacks->destroy) {
+    s_cs_callbacks->destroy(rb->mutex);
+  }
   rb->mutex = NULL;
   #endif
 }
@@ -255,11 +162,19 @@ bool RingBuffer_OwnsBuffer(const RingBuffer_t *rb) {
 }
 
 void RingBuffer_Clear(RingBuffer_t *rb) {
+  #if RING_USE_RTOS_MUTEX
+  ENTER_CRITICAL_SECTION(rb->mutex);
+  #else
   ENTER_CRITICAL_SECTION();
+  #endif
   rb->head = 0;
   rb->tail = 0;
   rb->count = 0;
+  #if RING_USE_RTOS_MUTEX
+  EXIT_CRITICAL_SECTION(rb->mutex);
+  #else
   EXIT_CRITICAL_SECTION();
+  #endif
 }
 
 // Check if the ring buffer is empty
@@ -276,14 +191,14 @@ bool RingBuffer_Write(RingBuffer_t *rb, const void *data) {
   // Calculate the offset and copy the data
   void *dest = (uint8_t *)rb->buffer + (rb->head * rb->element_size);
   memcpy(dest, data, rb->element_size);
-  #if USE_RTOS_MUTEX
+  #if RING_USE_RTOS_MUTEX
   ENTER_CRITICAL_SECTION(rb->mutex);
   #else
   ENTER_CRITICAL_SECTION();
   #endif
   rb->head = (rb->head + 1) % rb->size; // Increment head with wrap-around
   rb->count++;                          // Increment count
-  #if USE_RTOS_MUTEX
+  #if RING_USE_RTOS_MUTEX
   EXIT_CRITICAL_SECTION(rb->mutex);
   #else
   EXIT_CRITICAL_SECTION();
@@ -303,7 +218,7 @@ bool RingBuffer_PushFront(RingBuffer_t *rb, const void *data) {
   void *dest = (uint8_t *)rb->buffer + (rb->head * rb->element_size);
   memcpy(dest, data, rb->element_size);
   
-  #if USE_RTOS_MUTEX
+  #if RING_USE_RTOS_MUTEX
   ENTER_CRITICAL_SECTION(rb->mutex);
   #else
   ENTER_CRITICAL_SECTION();
@@ -318,7 +233,7 @@ bool RingBuffer_PushFront(RingBuffer_t *rb, const void *data) {
     // Buffer wasn't full, increment count
     rb->count++;
   }
-  #if USE_RTOS_MUTEX
+  #if RING_USE_RTOS_MUTEX
   EXIT_CRITICAL_SECTION(rb->mutex);
   #else
   EXIT_CRITICAL_SECTION();
@@ -351,7 +266,7 @@ uint32_t RingBuffer_PushBackOverwriteMultiple(RingBuffer_t *rb, const void *data
     }
   }
   
-  #if USE_RTOS_MUTEX
+  #if RING_USE_RTOS_MUTEX
   ENTER_CRITICAL_SECTION(rb->mutex);
   #else
   ENTER_CRITICAL_SECTION();
@@ -359,7 +274,7 @@ uint32_t RingBuffer_PushBackOverwriteMultiple(RingBuffer_t *rb, const void *data
   rb->head = head;
   rb->tail = tail;
   rb->count = current_count;
-  #if USE_RTOS_MUTEX
+  #if RING_USE_RTOS_MUTEX
   EXIT_CRITICAL_SECTION(rb->mutex);
   #else
   EXIT_CRITICAL_SECTION();
@@ -376,14 +291,14 @@ bool RingBuffer_Read(RingBuffer_t *rb, void *data) {
   // Calculate the offset and copy the data
   void *src = (uint8_t *)rb->buffer + (rb->tail * rb->element_size);
   memcpy(data, src, rb->element_size);
-  #if USE_RTOS_MUTEX
+  #if RING_USE_RTOS_MUTEX
   ENTER_CRITICAL_SECTION(rb->mutex);
   #else
   ENTER_CRITICAL_SECTION();
   #endif
   rb->tail = (rb->tail + 1) % rb->size; // Increment tail with wrap-around
   rb->count--;                          // Decrement count
-  #if USE_RTOS_MUTEX
+  #if RING_USE_RTOS_MUTEX
   EXIT_CRITICAL_SECTION(rb->mutex);
   #else
   EXIT_CRITICAL_SECTION();
@@ -445,14 +360,14 @@ uint32_t RingBuffer_WriteMultiple(RingBuffer_t *rb, const void *data, uint32_t c
   }
 
   // Atomic update of head and count
-  #if USE_RTOS_MUTEX
+  #if RING_USE_RTOS_MUTEX
   ENTER_CRITICAL_SECTION(rb->mutex);
   #else
   ENTER_CRITICAL_SECTION();
   #endif
   rb->head = (head + elements_to_write) % rb->size;
   rb->count += elements_to_write;
-  #if USE_RTOS_MUTEX
+  #if RING_USE_RTOS_MUTEX
   EXIT_CRITICAL_SECTION(rb->mutex);
   #else
   EXIT_CRITICAL_SECTION();
@@ -485,14 +400,14 @@ uint32_t RingBuffer_ReadMultiple(RingBuffer_t *rb, void *data, uint32_t count) {
   }
 
   // Atomic update of tail and count
-  #if USE_RTOS_MUTEX
+  #if RING_USE_RTOS_MUTEX
   ENTER_CRITICAL_SECTION(rb->mutex);
   #else
   ENTER_CRITICAL_SECTION();
   #endif
   rb->tail = (tail + elements_to_read) % rb->size;
   rb->count -= elements_to_read;
-  #if USE_RTOS_MUTEX
+  #if RING_USE_RTOS_MUTEX
   EXIT_CRITICAL_SECTION(rb->mutex);
   #else
   EXIT_CRITICAL_SECTION();
@@ -508,14 +423,14 @@ bool RingBuffer_PopBack(RingBuffer_t *rb) {
   }
 
   // Atomic decrement of head and count
-  #if USE_RTOS_MUTEX
+  #if RING_USE_RTOS_MUTEX
   ENTER_CRITICAL_SECTION(rb->mutex);
   #else
   ENTER_CRITICAL_SECTION();
   #endif
   rb->head = (rb->head == 0) ? (rb->size - 1) : (rb->head - 1);
   rb->count--;
-  #if USE_RTOS_MUTEX
+  #if RING_USE_RTOS_MUTEX
   EXIT_CRITICAL_SECTION(rb->mutex);
   #else
   EXIT_CRITICAL_SECTION();
@@ -534,7 +449,7 @@ uint32_t RingBuffer_PopBackMultiple(RingBuffer_t *rb, uint32_t count) {
   uint32_t elements_to_remove = (count > available) ? available : count;
 
   // Atomic decrement of head and count
-  #if USE_RTOS_MUTEX
+  #if RING_USE_RTOS_MUTEX
   ENTER_CRITICAL_SECTION(rb->mutex);
   #else
   ENTER_CRITICAL_SECTION();
@@ -545,7 +460,7 @@ uint32_t RingBuffer_PopBackMultiple(RingBuffer_t *rb, uint32_t count) {
     rb->head = rb->size - (elements_to_remove - rb->head);
   }
   rb->count -= elements_to_remove;
-  #if USE_RTOS_MUTEX
+  #if RING_USE_RTOS_MUTEX
   EXIT_CRITICAL_SECTION(rb->mutex);
   #else
   EXIT_CRITICAL_SECTION();
@@ -560,14 +475,14 @@ bool RingBuffer_PopFront(RingBuffer_t *rb) {
   }
 
   // Atomic increment of tail and decrement count
-  #if USE_RTOS_MUTEX
+  #if RING_USE_RTOS_MUTEX
   ENTER_CRITICAL_SECTION(rb->mutex);
   #else
   ENTER_CRITICAL_SECTION();
   #endif
   rb->tail = (rb->tail + 1) % rb->size;
   rb->count--;
-  #if USE_RTOS_MUTEX
+  #if RING_USE_RTOS_MUTEX
   EXIT_CRITICAL_SECTION(rb->mutex);
   #else
   EXIT_CRITICAL_SECTION();
@@ -586,14 +501,14 @@ uint32_t RingBuffer_PopFrontMultiple(RingBuffer_t *rb, uint32_t count) {
   uint32_t elements_to_remove = (count > available) ? available : count;
 
   // Atomic increment of tail and decrement count
-  #if USE_RTOS_MUTEX
+  #if RING_USE_RTOS_MUTEX
   ENTER_CRITICAL_SECTION(rb->mutex);
   #else
   ENTER_CRITICAL_SECTION();
   #endif
   rb->tail = (rb->tail + elements_to_remove) % rb->size;
   rb->count -= elements_to_remove;
-  #if USE_RTOS_MUTEX
+  #if RING_USE_RTOS_MUTEX
   EXIT_CRITICAL_SECTION(rb->mutex);
   #else
   EXIT_CRITICAL_SECTION();
@@ -659,10 +574,6 @@ uint32_t RingBuffer_DumpToRing(RingBuffer_t *src_rb, RingBuffer_t *dst_rb, bool 
   
   // Check element size compatibility
   if (src_rb->element_size != dst_rb->element_size) {
-#ifdef ESP_IDF_VERSION
-    ESP_LOGW(TAG, "Ring dump failed: incompatible element sizes (src=%zu, dst=%zu)", 
-             src_rb->element_size, dst_rb->element_size);
-#endif
     return 0;
   }
   
@@ -710,9 +621,9 @@ uint32_t RingBuffer_DumpToRing(RingBuffer_t *src_rb, RingBuffer_t *dst_rb, bool 
     dst_head = (dst_head + chunk_size) % dst_rb->size;
   }
   
-  // Update ring buffer states atomically
-  #if USE_RTOS_MUTEX
-  ENTER_CRITICAL_SECTION(rb->mutex);
+  // Update source ring buffer states atomically
+  #if RING_USE_RTOS_MUTEX
+  ENTER_CRITICAL_SECTION(src_rb->mutex);
   #else
   ENTER_CRITICAL_SECTION();
   #endif
@@ -726,29 +637,30 @@ uint32_t RingBuffer_DumpToRing(RingBuffer_t *src_rb, RingBuffer_t *dst_rb, bool 
       src_rb->count = 0;  // Safety check to prevent underflow
     }
   }
+  #if RING_USE_RTOS_MUTEX
+  EXIT_CRITICAL_SECTION(src_rb->mutex);
+  #else
+  EXIT_CRITICAL_SECTION();
+  #endif
   
   // Always update destination head and count with overflow protection
+  #if RING_USE_RTOS_MUTEX
+  ENTER_CRITICAL_SECTION(dst_rb->mutex);
+  #else
+  ENTER_CRITICAL_SECTION();
+  #endif
   dst_rb->head = dst_head;
   uint32_t new_count = dst_rb->count + copied_count;
   if (new_count <= dst_rb->size) {
     dst_rb->count = new_count;
   } else {
     dst_rb->count = dst_rb->size;  // Clamp to maximum size
-#ifdef ESP_IDF_VERSION
-    ESP_LOGW(TAG, "Ring dump overflow detected: attempted count %u, clamped to %u", 
-             new_count, dst_rb->size);
-#endif
   }
-  #if USE_RTOS_MUTEX
-  EXIT_CRITICAL_SECTION(rb->mutex);
+  #if RING_USE_RTOS_MUTEX
+  EXIT_CRITICAL_SECTION(dst_rb->mutex);
   #else
   EXIT_CRITICAL_SECTION();
   #endif
-  
-#ifdef ESP_IDF_VERSION
-  ESP_LOGI(TAG, "Ring dump completed: %u elements copied directly (%s source)", 
-           copied_count, preserve_source ? "preserved" : "consumed");
-#endif
   
   return copied_count;
 }
@@ -761,10 +673,6 @@ uint32_t RingBuffer_DumpToRingLimited(RingBuffer_t *src_rb, RingBuffer_t *dst_rb
   
   // Check element size compatibility
   if (src_rb->element_size != dst_rb->element_size) {
-#ifdef ESP_IDF_VERSION
-    ESP_LOGW(TAG, "Ring dump limited failed: incompatible element sizes (src=%zu, dst=%zu)", 
-             src_rb->element_size, dst_rb->element_size);
-#endif
     return 0;
   }
   
@@ -818,9 +726,9 @@ uint32_t RingBuffer_DumpToRingLimited(RingBuffer_t *src_rb, RingBuffer_t *dst_rb
     dst_head = (dst_head + chunk_size) % dst_rb->size;
   }
   
-  // Update ring buffer states atomically
-  #if USE_RTOS_MUTEX
-  ENTER_CRITICAL_SECTION(rb->mutex);
+  // Update source ring buffer states atomically
+  #if RING_USE_RTOS_MUTEX
+  ENTER_CRITICAL_SECTION(src_rb->mutex);
   #else
   ENTER_CRITICAL_SECTION();
   #endif
@@ -834,29 +742,30 @@ uint32_t RingBuffer_DumpToRingLimited(RingBuffer_t *src_rb, RingBuffer_t *dst_rb
       src_rb->count = 0;  // Safety check to prevent underflow
     }
   }
+  #if RING_USE_RTOS_MUTEX
+  EXIT_CRITICAL_SECTION(src_rb->mutex);
+  #else
+  EXIT_CRITICAL_SECTION();
+  #endif
   
   // Always update destination head and count with overflow protection
+  #if RING_USE_RTOS_MUTEX
+  ENTER_CRITICAL_SECTION(dst_rb->mutex);
+  #else
+  ENTER_CRITICAL_SECTION();
+  #endif
   dst_rb->head = dst_head;
   uint32_t new_count = dst_rb->count + copied_count;
   if (new_count <= dst_rb->size) {
     dst_rb->count = new_count;
   } else {
     dst_rb->count = dst_rb->size;  // Clamp to maximum size
-#ifdef ESP_IDF_VERSION
-    ESP_LOGW(TAG, "Ring dump limited overflow detected: attempted count %u, clamped to %u", 
-             new_count, dst_rb->size);
-#endif
   }
-  #if USE_RTOS_MUTEX
-  EXIT_CRITICAL_SECTION(rb->mutex);
+  #if RING_USE_RTOS_MUTEX
+  EXIT_CRITICAL_SECTION(dst_rb->mutex);
   #else
   EXIT_CRITICAL_SECTION();
   #endif
-  
-#ifdef ESP_IDF_VERSION
-  ESP_LOGI(TAG, "Ring dump limited completed: %u/%u elements copied directly (%s source)", 
-           copied_count, max_count, preserve_source ? "preserved" : "consumed");
-#endif
   
   return copied_count;
 }
