@@ -11,13 +11,11 @@
 ************************************************************/
 #ifndef APP_DEBUG_H_
 #define APP_DEBUG_H_
-
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include "bit_utils.h"
 
 /* ========================================================================== */
 /* Enhanced Logging Configuration */
