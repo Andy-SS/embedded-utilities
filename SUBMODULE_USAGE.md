@@ -111,25 +111,25 @@ int main(void) {
 
 int main(void) {
     // Register critical section callbacks (ThreadX example)
-    RingBuffer_RegisterCriticalSectionCallbacks(&threadx_cs_callbacks);
+    ring_register_cs_callbacks(&threadx_cs_callbacks);
     
     // Create ring buffers - each gets its own mutex
-    RingBuffer_t uart_rx_ring;
-    RingBuffer_t sensor_data_ring;
+    ring_t uart_rx_ring;
+    ring_t sensor_data_ring;
     
-    RingBuffer_InitDynamic(&uart_rx_ring, 256, sizeof(uint8_t));
-    RingBuffer_InitDynamic(&sensor_data_ring, 128, sizeof(sensor_t));
+    ring_init_dynamic(&uart_rx_ring, 256, sizeof(uint8_t));
+    ring_init_dynamic(&sensor_data_ring, 128, sizeof(sensor_t));
     
     // Use ring buffers - synchronization is automatic
     uint8_t byte = 0xAB;
-    RingBuffer_Write(&uart_rx_ring, &byte);
+    ring_write(&uart_rx_ring, &byte);
     
     sensor_t reading = {0};
-    RingBuffer_Write(&sensor_data_ring, &reading);
+    ring_write(&sensor_data_ring, &reading);
     
     // Cleanup
-    RingBuffer_Destroy(&uart_rx_ring);
-    RingBuffer_Destroy(&sensor_data_ring);
+    ring_destroy(&uart_rx_ring);
+    ring_destroy(&sensor_data_ring);
     
     return 0;
 }
@@ -150,14 +150,14 @@ void app_main(void) {
     elog_subscribe(elog_console_subscriber, ELOG_DEFAULT_THRESHOLD);
     
     // Register ring buffer callbacks (ESP32 spinlocks)
-    RingBuffer_RegisterCriticalSectionCallbacks(&esp32_cs_callbacks);
+    ring_register_cs_callbacks(&esp32_cs_callbacks);
     
-    RingBuffer_t ble_rx_ring;
-    RingBuffer_InitDynamic(&ble_rx_ring, 512, sizeof(uint8_t));
+    ring_t ble_rx_ring;
+    ring_init_dynamic(&ble_rx_ring, 512, sizeof(uint8_t));
     
     ELOG_INFO(ELOG_MD_MAIN, "ESP32 app initialized");
     
-    RingBuffer_Destroy(&ble_rx_ring);
+    ring_destroy(&ble_rx_ring);
 }
 ```
 
@@ -203,7 +203,7 @@ Platform-specific helpers (optional):
 ### Ring Buffer Refactoring
 - ✅ Removed global critical sections
 - ✅ Each ring buffer gets its own per-instance mutex
-- ✅ Added `RingBuffer_RegisterCriticalSectionCallbacks()` API
+- ✅ Added `ring_register_cs_callbacks()` API
 - ✅ Automatic mutex creation/destruction during Init/Destroy
 - ✅ ISR-safe operations (especially on ESP32)
 - ⚠️ Must register callbacks before creating ring buffers

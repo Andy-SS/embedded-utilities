@@ -27,8 +27,8 @@ The Ring Buffer (circular buffer) is a fixed-size data structure that efficientl
 
 ```c
 MyData buffer[128];
-RingBuffer_t ring;
-RingBuffer_Init(&ring, buffer, 128, sizeof(MyData));
+ring_t ring;
+ring_init(&ring, buffer, 128, sizeof(MyData));
 ```
 
 **Pros:** No dynamic allocation, predictable memory usage
@@ -37,15 +37,15 @@ RingBuffer_Init(&ring, buffer, 128, sizeof(MyData));
 ### Dynamic Allocation (Runtime allocation)
 
 ```c
-RingBuffer_t ring;
-if (RingBuffer_InitDynamic(&ring, 128, sizeof(MyData))) {
+ring_t ring;
+if (ring_init_dynamic(&ring, 128, sizeof(MyData))) {
     // Ring buffer ready to use
-    // Remember to call RingBuffer_Destroy() when done
+    // Remember to call ring_destroy() when done
 }
 ```
 
 **Pros:** Flexible sizing at runtime
-**Cons:** Requires cleanup with `RingBuffer_Destroy()`
+**Cons:** Requires cleanup with `ring_destroy()`
 
 ## Thread-Safe Usage with Per-Instance Mutexes
 
@@ -55,39 +55,39 @@ The ring buffer uses callback functions for critical sections, allowing each rin
 
 ```c
 // Register the critical section callbacks (ThreadX example)
-RingBuffer_RegisterCriticalSectionCallbacks(&threadx_cs_callbacks);
+ring_register_cs_callbacks(&threadx_cs_callbacks);
 
 // Create ring buffers - each will automatically get its own mutex
-RingBuffer_t data_ring;
-RingBuffer_InitDynamic(&data_ring, 256, sizeof(MyData));
+ring_t data_ring;
+ring_init_dynamic(&data_ring, 256, sizeof(MyData));
 
-RingBuffer_t command_ring;
-RingBuffer_InitDynamic(&command_ring, 128, sizeof(MyData));
+ring_t command_ring;
+ring_init_dynamic(&command_ring, 128, sizeof(MyData));
 ```
 
 ### How It Works
 
-- **One-time registration**: Call `RingBuffer_RegisterCriticalSectionCallbacks()` once at app startup
-- **Per-instance mutexes**: Each `RingBuffer_Init()` or `RingBuffer_InitDynamic()` creates a unique mutex for that buffer
+- **One-time registration**: Call `ring_register_cs_callbacks()` once at app startup
+- **Per-instance mutexes**: Each `ring_init()` or `ring_init_dynamic()` creates a unique mutex for that buffer
 - **Independent synchronization**: Each ring buffer protects its own operations without affecting others
-- **Automatic cleanup**: `RingBuffer_Destroy()` cleans up the mutex when done
+- **Automatic cleanup**: `ring_destroy()` cleans up the mutex when done
 
 ### Available Platform Callbacks
 
 - **ThreadX**: `threadx_cs_callbacks` - Create via `ring_critical_section_threadx.c`
 - **FreeRTOS**: `freertos_cs_callbacks` - Create via `ring_critical_section_freertos.c`
 - **ESP32**: `esp32_cs_callbacks` - Create via `ring_critical_section_esp32.c`
-- **Bare Metal**: Pass `NULL` to `RingBuffer_RegisterCriticalSectionCallbacks()` for non-thread-safe operation
+- **Bare Metal**: Pass `NULL` to `ring_register_cs_callbacks()` for non-thread-safe operation
 
 ### Usage Example (Operations Are Automatically Protected)
 
 ```c
 // No need to manually manage mutex - operations are thread-safe
 uint32_t data = 42;
-RingBuffer_Write(&data_ring, &data);  // Uses data_ring's mutex internally
+ring_write(&data_ring, &data);  // Uses data_ring's mutex internally
 
 MyData cmd = {...};
-RingBuffer_Write(&command_ring, &cmd);  // Uses command_ring's mutex independently
+ring_write(&command_ring, &cmd);  // Uses command_ring's mutex independently
 ```
 
 ## Basic Operations
@@ -97,16 +97,16 @@ RingBuffer_Write(&command_ring, &cmd);  // Uses command_ring's mutex independent
 ```c
 // Write single element (fails if full)
 MyData value = {...};
-if (!RingBuffer_Write(&ring, &value)) {
+if (!ring_write(&ring, &value)) {
     // Buffer is full, handle overflow
 }
 
 // Write with overwrite (always succeeds, discards oldest if full)
-RingBuffer_PushFront(&ring, &value);
+ring_push_front(&ring, &value);
 
 // Write multiple elements with overwrite
 MyData values[5] = {...};
-uint32_t written = RingBuffer_PushBackOverwriteMultiple(&ring, values, 5);
+uint32_t written = ring_push_back(&ring, values, 5);
 ```
 
 ### Read Operations (Destructive)
@@ -114,16 +114,16 @@ uint32_t written = RingBuffer_PushBackOverwriteMultiple(&ring, values, 5);
 ```c
 // Read single element (removes from buffer)
 MyData out;
-if (RingBuffer_Read(&ring, &out)) {
+if (ring_read(&ring, &out)) {
     // Successfully read oldest element
 }
 
 // Read multiple elements
 MyData buffer[10];
-uint32_t read_count = RingBuffer_ReadMultiple(&ring, buffer, 10);
+uint32_t read_count = ring_read_multiple(&ring, buffer, 10);
 
 // Pop from back (remove newest)
-bool success = RingBuffer_PopBack(&ring);
+bool success = ring_pop_back(&ring);
 ```
 
 ### Peek Operations (Non-Destructive)
@@ -131,52 +131,52 @@ bool success = RingBuffer_PopBack(&ring);
 ```c
 // Peek oldest element without removing
 MyData out;
-if (RingBuffer_PeekFront(&ring, &out)) {
+if (ring_peek_front(&ring, &out)) {
     // Got oldest element, still in ring
 }
 
 // Peek newest element without removing
-if (RingBuffer_PeekBack(&ring, &out)) {
+if (ring_peek_back(&ring, &out)) {
     // Got newest element, still in ring
 }
 
 // Peek multiple elements from front (oldest first)
 MyData peek_array[10];
-uint32_t peeked = RingBuffer_PeekFrontMultiple(&ring, peek_array, 10);
+uint32_t peeked = ring_peek_front_multiple(&ring, peek_array, 10);
 
 // Peek multiple elements from back (newest first)
-uint32_t peeked_back = RingBuffer_PeekBackMultiple(&ring, peek_array, 10);
+uint32_t peeked_back = ring_peek_back_multiple(&ring, peek_array, 10);
 ```
 
 ## Status Checking
 
 ```c
 // Check element count
-uint32_t available = RingBuffer_Available(&ring);
-uint32_t free_space = RingBuffer_Free(&ring);
+uint32_t available = ring_available(&ring);
+uint32_t free_space = ring_get_free(&ring);
 
 // Check state
-bool is_empty = RingBuffer_IsEmpty(&ring);
-bool is_full = RingBuffer_IsFull(&ring);
-bool owns_buffer = RingBuffer_OwnsBuffer(&ring);
+bool is_empty = ring_is_empty(&ring);
+bool is_full = ring_is_full(&ring);
+bool owns_buffer = ring_is_owns_buffer(&ring);
 
 // Clear buffer
-RingBuffer_Clear(&ring);
+ring_clear(&ring);
 ```
 
 ## Ring-to-Ring Operations (High Performance)
 
 ```c
-RingBuffer_t source, destination;
+ring_t source, destination;
 
 // Copy all data (preserve source)
-uint32_t copied = RingBuffer_DumpToRing(&source, &destination, true);
+uint32_t copied = ring_dump(&source, &destination, true);
 
 // Move all data (consume source)
-uint32_t moved = RingBuffer_DumpToRing(&source, &destination, false);
+uint32_t moved = ring_dump(&source, &destination, false);
 
 // Copy limited number of elements
-uint32_t batch = RingBuffer_DumpToRingLimited(&source, &destination, 50, false);
+uint32_t batch = ring_dump_count(&source, &destination, 50, false);
 ```
 
 ## Real-World Example: Multi-Stage Data Pipeline with Independent Mutexes
@@ -189,17 +189,17 @@ typedef struct {
 } SensorData_t;
 
 // Create processing stages - each has independent thread safety
-RingBuffer_t raw_data, filtered_data, processed_data, tx_queue;
+ring_t raw_data, filtered_data, processed_data, tx_queue;
 
 void app_init(void) {
   // Register ThreadX critical section callbacks (one-time)
-  RingBuffer_RegisterCriticalSectionCallbacks(&threadx_cs_callbacks);
+  ring_register_cs_callbacks(&threadx_cs_callbacks);
   
   // Initialize all rings - each creates its own mutex automatically
-  RingBuffer_InitDynamic(&raw_data, 100, sizeof(SensorData_t));
-  RingBuffer_InitDynamic(&filtered_data, 50, sizeof(SensorData_t));
-  RingBuffer_InitDynamic(&processed_data, 50, sizeof(SensorData_t));
-  RingBuffer_InitDynamic(&tx_queue, 20, sizeof(SensorData_t));
+  ring_init_dynamic(&raw_data, 100, sizeof(SensorData_t));
+  ring_init_dynamic(&filtered_data, 50, sizeof(SensorData_t));
+  ring_init_dynamic(&processed_data, 50, sizeof(SensorData_t));
+  ring_init_dynamic(&tx_queue, 20, sizeof(SensorData_t));
 }
 
 void producer_task(void *arg) {
@@ -210,7 +210,7 @@ void producer_task(void *arg) {
     sensor_read(&reading);
     
     // Write to raw_data - automatically protected by its own mutex
-    RingBuffer_PushFront(&raw_data, &reading);
+    ring_push_front(&raw_data, &reading);
     
     vTaskDelay(pdMS_TO_TICKS(10));
   }
@@ -220,7 +220,7 @@ void filter_task(void *arg) {
   // Filter data and move to filtered_data
   // Each ring buffer uses its own independent mutex
   while (1) {
-    uint32_t copied = RingBuffer_DumpToRing(&raw_data, &filtered_data, true);
+    uint32_t copied = ring_dump(&raw_data, &filtered_data, true);
     if (copied == 0) {
       vTaskDelay(pdMS_TO_TICKS(5));
     }
@@ -230,11 +230,11 @@ void filter_task(void *arg) {
 void process_task(void *arg) {
   while (1) {
     // Process and move data
-    uint32_t moved = RingBuffer_DumpToRing(&filtered_data, &processed_data, false);
+    uint32_t moved = ring_dump(&filtered_data, &processed_data, false);
     
     // Batch transmission
-    if (RingBuffer_Available(&processed_data) >= 10) {
-      uint32_t tx_batch = RingBuffer_DumpToRingLimited(&processed_data, &tx_queue, 10, false);
+    if (ring_available(&processed_data) >= 10) {
+      uint32_t tx_batch = ring_dump_count(&processed_data, &tx_queue, 10, false);
       transmit_batch(&tx_queue);
     }
     
@@ -244,10 +244,10 @@ void process_task(void *arg) {
 
 void app_cleanup(void) {
   // Cleanup destroys each buffer's individual mutex
-  RingBuffer_Destroy(&raw_data);
-  RingBuffer_Destroy(&filtered_data);
-  RingBuffer_Destroy(&processed_data);
-  RingBuffer_Destroy(&tx_queue);
+  ring_destroy(&raw_data);
+  ring_destroy(&filtered_data);
+  ring_destroy(&processed_data);
+  ring_destroy(&tx_queue);
 }
 ```
 
@@ -257,19 +257,19 @@ The ring buffer automatically creates and manages per-instance mutexes:
 
 ```c
 // Register critical section callbacks at app startup
-RingBuffer_RegisterCriticalSectionCallbacks(&threadx_cs_callbacks);
+ring_register_cs_callbacks(&threadx_cs_callbacks);
 
 // Create ring buffer - automatically creates a mutex for this instance
-RingBuffer_t my_ring;
-RingBuffer_InitDynamic(&my_ring, 128, sizeof(uint32_t));
+ring_t my_ring;
+ring_init_dynamic(&my_ring, 128, sizeof(uint32_t));
 // my_ring.mutex is now initialized and ready
 
 // Use operations normally - mutex is handled internally
-RingBuffer_Write(&my_ring, &data);
-RingBuffer_Read(&my_ring, &output);
+ring_write(&my_ring, &data);
+ring_read(&my_ring, &output);
 
 // Cleanup - automatically destroys this ring's mutex
-RingBuffer_Destroy(&my_ring);
+ring_destroy(&my_ring);
 // my_ring.mutex is cleaned up and set to NULL
 ```
 
@@ -278,27 +278,27 @@ RingBuffer_Destroy(&my_ring);
 Each ring buffer maintains its own mutex, allowing truly independent thread-safe access:
 
 ```c
-RingBuffer_t uart_rx, uart_tx, ble_rx, ble_tx;
+ring_t uart_rx, uart_tx, ble_rx, ble_tx;
 
 // Register callbacks once
-RingBuffer_RegisterCriticalSectionCallbacks(&threadx_cs_callbacks);
+ring_register_cs_callbacks(&threadx_cs_callbacks);
 
 // Each creates its own mutex
-RingBuffer_InitDynamic(&uart_rx, 256, sizeof(uint8_t));
-RingBuffer_InitDynamic(&uart_tx, 256, sizeof(uint8_t));
-RingBuffer_InitDynamic(&ble_rx, 512, sizeof(uint8_t));
-RingBuffer_InitDynamic(&ble_tx, 512, sizeof(uint8_t));
+ring_init_dynamic(&uart_rx, 256, sizeof(uint8_t));
+ring_init_dynamic(&uart_tx, 256, sizeof(uint8_t));
+ring_init_dynamic(&ble_rx, 512, sizeof(uint8_t));
+ring_init_dynamic(&ble_tx, 512, sizeof(uint8_t));
 
 // Independent synchronization - no contention between buffers
-RingBuffer_Write(&uart_rx, &data);  // Uses uart_rx.mutex
-RingBuffer_Write(&ble_rx, &data);   // Uses ble_rx.mutex (different lock)
+ring_write(&uart_rx, &data);  // Uses uart_rx.mutex
+ring_write(&ble_rx, &data);   // Uses ble_rx.mutex (different lock)
 ```
 
 ## Memory Management
 
 ```c
 // For dynamically allocated rings
-RingBuffer_Destroy(&ring);  // Frees the buffer and clears structure
+ring_destroy(&ring);  // Frees the buffer and clears structure
 
 // For static rings
 // No explicit cleanup needed, buffer is managed externally
@@ -316,9 +316,9 @@ RingBuffer_Destroy(&ring);  // Frees the buffer and clears structure
 
 ## Best Practices
 
-1. **Register callbacks at app startup** - Call `RingBuffer_RegisterCriticalSectionCallbacks()` once during initialization
+1. **Register callbacks at app startup** - Call `ring_register_cs_callbacks()` once during initialization
 2. **Each ring buffer is independent** - No mutex sharing between buffers, no contention
-3. **Always destroy dynamically allocated rings** - Call `RingBuffer_Destroy()` to clean up mutex and buffer memory
+3. **Always destroy dynamically allocated rings** - Call `ring_destroy()` to clean up mutex and buffer memory
 4. **Check return values** - Write/Read may fail if buffer is full/empty
 5. **Use DumpToRing for batch operations** - More efficient than multiple individual operations
 6. **No manual critical sections needed** - Mutex operations are handled automatically
@@ -341,18 +341,18 @@ Before using any ring buffer operations, register the platform-specific critical
 ```c
 // ThreadX
 #include "ring_critical_section_threadx.h"
-RingBuffer_RegisterCriticalSectionCallbacks(&threadx_cs_callbacks);
+ring_register_cs_callbacks(&threadx_cs_callbacks);
 
 // FreeRTOS
 #include "ring_critical_section_freertos.h"
-RingBuffer_RegisterCriticalSectionCallbacks(&freertos_cs_callbacks);
+ring_register_cs_callbacks(&freertos_cs_callbacks);
 
 // ESP32 (FreeRTOS with spinlocks)
 #include "ring_critical_section_esp32.h"
-RingBuffer_RegisterCriticalSectionCallbacks(&esp32_cs_callbacks);
+ring_register_cs_callbacks(&esp32_cs_callbacks);
 
 // Bare Metal (no synchronization)
-RingBuffer_RegisterCriticalSectionCallbacks(NULL);
+ring_register_cs_callbacks(NULL);
 ```
 
 ### How Callbacks Work
@@ -363,7 +363,7 @@ Each platform provides callbacks that implement:
 - `enter(mutex)` - Lock the mutex
 - `exit(mutex)` - Unlock the mutex
 
-When you call `RingBuffer_Init()` or `RingBuffer_InitDynamic()`, the ring buffer uses `create()` to make a unique mutex for that instance. When you call `RingBuffer_Destroy()`, it uses `destroy()` to clean up.
+When you call `ring_init()` or `ring_init_dynamic()`, the ring buffer uses `create()` to make a unique mutex for that instance. When you call `ring_destroy()`, it uses `destroy()` to clean up.
 
 ### Platform-Specific Notes
 
@@ -461,11 +461,11 @@ const ring_cs_callbacks_t threadx_cs_callbacks = {
 
 void app_init(void) {
   // Register ThreadX callbacks
-  RingBuffer_RegisterCriticalSectionCallbacks(&threadx_cs_callbacks);
+  ring_register_cs_callbacks(&threadx_cs_callbacks);
   
   // Create thread-safe ring buffers
-  RingBuffer_t sensor_data;
-  RingBuffer_InitDynamic(&sensor_data, 256, sizeof(sensor_reading_t));
+  ring_t sensor_data;
+  ring_init_dynamic(&sensor_data, 256, sizeof(sensor_reading_t));
   
   // Now all operations are thread-safe
 }
@@ -479,11 +479,11 @@ void app_init(void) {
 
 void app_init(void) {
   // Register ESP32 spinlock callbacks
-  RingBuffer_RegisterCriticalSectionCallbacks(&esp32_cs_callbacks);
+  ring_register_cs_callbacks(&esp32_cs_callbacks);
   
   // Create ISR-safe ring buffers
-  RingBuffer_t ble_rx_ring;
-  RingBuffer_InitDynamic(&ble_rx_ring, 512, sizeof(ble_packet_t));
+  ring_t ble_rx_ring;
+  ring_init_dynamic(&ble_rx_ring, 512, sizeof(ble_packet_t));
   
   // Safe in both tasks and ISRs
 }
@@ -491,7 +491,7 @@ void app_init(void) {
 void ble_rx_callback(uint8_t *data, uint16_t len) {
   // Called from BLE ISR
   for (uint16_t i = 0; i < len; i++) {
-    RingBuffer_Write(&ble_rx_ring, &data[i]);  // ISR-safe
+    ring_write(&ble_rx_ring, &data[i]);  // ISR-safe
   }
 }
 ```
@@ -503,11 +503,11 @@ void ble_rx_callback(uint8_t *data, uint16_t len) {
 
 void app_init(void) {
   // No callbacks needed for bare metal
-  RingBuffer_RegisterCriticalSectionCallbacks(NULL);
+  ring_register_cs_callbacks(NULL);
   
   // Ring buffer is not thread-safe, but works fine
-  RingBuffer_t data_buffer;
-  RingBuffer_InitDynamic(&data_buffer, 128, sizeof(sensor_data_t));
+  ring_t data_buffer;
+  ring_init_dynamic(&data_buffer, 128, sizeof(sensor_data_t));
 }
 ```
 

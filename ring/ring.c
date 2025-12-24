@@ -1,11 +1,11 @@
 /***********************************************************
  * @file	ring.c
- * @author	Andy Chen (andy.chen@respiree.com)
+ * @author	Andy Chen (clgm216@gmail.com)
  * @version	0.02
  * @date	2025-04-09
  * @brief
  * **********************************************************
- * @copyright Copyright (c) 2025 Respiree. All rights reserved.
+ * @copyright Copyright (c) 2025 TTK. All rights reserved.
  *
  ************************************************************/
 #include "ring.h"
@@ -42,7 +42,7 @@ static ring_cs_callbacks_t *s_cs_callbacks = NULL;
  * @param callbacks: Pointer to callback structure (NULL for no synchronization)
  * @return true on success
  */
-bool RingBuffer_RegisterCriticalSectionCallbacks(const ring_cs_callbacks_t *callbacks)
+bool ring_register_cs_callbacks(const ring_cs_callbacks_t *callbacks)
 {
   s_cs_callbacks = (ring_cs_callbacks_t *)callbacks;
   return true;
@@ -61,7 +61,7 @@ bool RingBuffer_RegisterCriticalSectionCallbacks(const ring_cs_callbacks_t *call
 #endif /* RING_USE_RTOS_MUTEX */
 
 // Initialize the ring buffer
-void RingBuffer_Init(RingBuffer_t *rb, void *buffer, uint32_t size, size_t element_size) {
+void ring_init(ring_t *rb, void *buffer, uint32_t size, size_t element_size) {
   rb->buffer = buffer;
   rb->head = 0;
   rb->tail = 0;
@@ -79,7 +79,7 @@ void RingBuffer_Init(RingBuffer_t *rb, void *buffer, uint32_t size, size_t eleme
 }
 
 // Initialize the ring buffer with dynamic allocation
-bool RingBuffer_InitDynamic(RingBuffer_t *rb, uint32_t size, size_t element_size) {
+bool ring_init_dynamic(ring_t *rb, uint32_t size, size_t element_size) {
   if (rb == NULL || size == 0 || element_size == 0) {
     return false;
   }
@@ -122,7 +122,7 @@ bool RingBuffer_InitDynamic(RingBuffer_t *rb, uint32_t size, size_t element_size
 }
 
 // Destroy ring buffer and free dynamically allocated memory
-void RingBuffer_Destroy(RingBuffer_t *rb) {
+void ring_destroy(ring_t *rb) {
   if (rb == NULL) {
     return;
   }
@@ -154,14 +154,14 @@ void RingBuffer_Destroy(RingBuffer_t *rb) {
 }
 
 // Check if ring buffer owns its buffer
-bool RingBuffer_OwnsBuffer(const RingBuffer_t *rb) {
+bool ring_is_owns_buffer(const ring_t *rb) {
   if (rb == NULL) {
     return false;
   }
   return rb->owns_buffer;
 }
 
-void RingBuffer_Clear(RingBuffer_t *rb) {
+void ring_clear(ring_t *rb) {
   #if RING_USE_RTOS_MUTEX
   ENTER_CRITICAL_SECTION(rb->mutex);
   #else
@@ -178,14 +178,14 @@ void RingBuffer_Clear(RingBuffer_t *rb) {
 }
 
 // Check if the ring buffer is empty
-bool RingBuffer_IsEmpty(const RingBuffer_t *rb) { return rb->count == 0; }
+bool ring_is_empty(const ring_t *rb) { return rb->count == 0; }
 
 // Check if the ring buffer is full (now uses all available slots!)
-bool RingBuffer_IsFull(const RingBuffer_t *rb) { return rb->count == rb->size; }
+bool ring_is_full(const ring_t *rb) { return rb->count == rb->size; }
 
 // Write an element to the ring buffer
-bool RingBuffer_Write(RingBuffer_t *rb, const void *data) {
-  if (RingBuffer_IsFull(rb)) {
+bool ring_write(ring_t *rb, const void *data) {
+  if (ring_is_full(rb)) {
     return false; // Buffer full, write fails
   }
   // Calculate the offset and copy the data
@@ -207,12 +207,12 @@ bool RingBuffer_Write(RingBuffer_t *rb, const void *data) {
 }
 
 // Write an element to the ring buffer (overwrites oldest data if full)
-bool RingBuffer_PushFront(RingBuffer_t *rb, const void *data) {
+bool ring_push_front(ring_t *rb, const void *data) {
   if (rb == NULL) {
     return false; // Not a valid ring buffer, write fails
   }
   
-  bool was_full = RingBuffer_IsFull(rb);
+  bool was_full = ring_is_full(rb);
   
   // Ring: overwrite oldest data when full
   void *dest = (uint8_t *)rb->buffer + (rb->head * rb->element_size);
@@ -242,7 +242,7 @@ bool RingBuffer_PushFront(RingBuffer_t *rb, const void *data) {
 }
 
 // Write multiple elements to the ring buffer (overwrites oldest data if full)
-uint32_t RingBuffer_PushBackOverwriteMultiple(RingBuffer_t *rb, const void *data, uint32_t count) {
+uint32_t ring_push_back(ring_t *rb, const void *data, uint32_t count) {
   if (rb == NULL || data == NULL || count == 0) { return 0; }
 
   uint32_t head = rb->head;
@@ -284,8 +284,8 @@ uint32_t RingBuffer_PushBackOverwriteMultiple(RingBuffer_t *rb, const void *data
 }
 
 // Read an element from the ring buffer
-bool RingBuffer_Read(RingBuffer_t *rb, void *data) {
-  if (rb == NULL || RingBuffer_IsEmpty(rb)) {
+bool ring_read(ring_t *rb, void *data) {
+  if (rb == NULL || ring_is_empty(rb)) {
     return false; // Buffer empty and ring type is static, read fails
   }
   // Calculate the offset and copy the data
@@ -307,7 +307,7 @@ bool RingBuffer_Read(RingBuffer_t *rb, void *data) {
 }
 
 // Get the number of elements available in the buffer
-uint32_t RingBuffer_Available(const RingBuffer_t *rb) { 
+uint32_t ring_available(const ring_t *rb) { 
   if (rb == NULL) { return 0; }
   
   // Safety check for corrupted ring buffer
@@ -322,7 +322,7 @@ uint32_t RingBuffer_Available(const RingBuffer_t *rb) {
 }
 
 // Get the number of free slots in the buffer (now uses full capacity!)
-uint32_t RingBuffer_Free(const RingBuffer_t *rb) {
+uint32_t ring_get_free(const ring_t *rb) {
   if (rb == NULL) { return 0; }
   
   // Safety check for corrupted ring buffer
@@ -337,10 +337,10 @@ uint32_t RingBuffer_Free(const RingBuffer_t *rb) {
 }
 
 // Write multiple elements to the ring buffer (DMA-friendly)
-uint32_t RingBuffer_WriteMultiple(RingBuffer_t *rb, const void *data, uint32_t count) {
+uint32_t ring_write_multiple(ring_t *rb, const void *data, uint32_t count) {
   if (rb == NULL || data == NULL || count == 0) { return 0; }
 
-  uint32_t free_slots = RingBuffer_Free(rb);
+  uint32_t free_slots = ring_get_free(rb);
   uint32_t elements_to_write = (count > free_slots) ? free_slots : count;
 
   if (elements_to_write == 0) { return 0; }
@@ -377,10 +377,10 @@ uint32_t RingBuffer_WriteMultiple(RingBuffer_t *rb, const void *data, uint32_t c
 }
 
 // Read multiple elements from the ring buffer (DMA-friendly)
-uint32_t RingBuffer_ReadMultiple(RingBuffer_t *rb, void *data, uint32_t count) {
+uint32_t ring_read_multiple(ring_t *rb, void *data, uint32_t count) {
   if (rb == NULL || data == NULL || count == 0) { return 0; }
 
-  uint32_t available = RingBuffer_Available(rb);
+  uint32_t available = ring_available(rb);
   uint32_t elements_to_read = (count > available) ? available : count;
 
   if (elements_to_read == 0) { return 0; }
@@ -417,8 +417,8 @@ uint32_t RingBuffer_ReadMultiple(RingBuffer_t *rb, void *data, uint32_t count) {
 }
 
 // Remove a single element from the back of the ring buffer
-bool RingBuffer_PopBack(RingBuffer_t *rb) {
-  if (rb == NULL || RingBuffer_IsEmpty(rb)) {
+bool ring_pop_back(ring_t *rb) {
+  if (rb == NULL || ring_is_empty(rb)) {
     return false; // Buffer empty or invalid, pop fails
   }
 
@@ -439,13 +439,13 @@ bool RingBuffer_PopBack(RingBuffer_t *rb) {
 }
 
 // Remove multiple elements from the back of the ring buffer
-uint32_t RingBuffer_PopBackMultiple(RingBuffer_t *rb, uint32_t count) {
-  if (rb == NULL || count == 0 || RingBuffer_IsEmpty(rb)) {
+uint32_t ring_pop_back_multiple(ring_t *rb, uint32_t count) {
+  if (rb == NULL || count == 0 || ring_is_empty(rb)) {
     return 0; // Invalid parameters or empty buffer
   }
 
   // Limit count to available elements
-  uint32_t available = RingBuffer_Available(rb);
+  uint32_t available = ring_available(rb);
   uint32_t elements_to_remove = (count > available) ? available : count;
 
   // Atomic decrement of head and count
@@ -469,8 +469,8 @@ uint32_t RingBuffer_PopBackMultiple(RingBuffer_t *rb, uint32_t count) {
 }
 
 // Remove a single element from the front of the ring buffer (oldest element)
-bool RingBuffer_PopFront(RingBuffer_t *rb) {
-  if (rb == NULL || RingBuffer_IsEmpty(rb)) {
+bool RingBuffer_PopFront(ring_t *rb) {
+  if (rb == NULL || ring_is_empty(rb)) {
     return false; // Buffer empty or invalid, pop fails
   }
 
@@ -491,13 +491,13 @@ bool RingBuffer_PopFront(RingBuffer_t *rb) {
 }
 
 // Remove multiple elements from the front of the ring buffer (oldest elements)
-uint32_t RingBuffer_PopFrontMultiple(RingBuffer_t *rb, uint32_t count) {
-  if (rb == NULL || count == 0 || RingBuffer_IsEmpty(rb)) {
+uint32_t RingBuffer_PopFrontMultiple(ring_t *rb, uint32_t count) {
+  if (rb == NULL || count == 0 || ring_is_empty(rb)) {
     return 0; // Invalid parameters or empty buffer
   }
 
   // Limit count to available elements
-  uint32_t available = RingBuffer_Available(rb);
+  uint32_t available = ring_available(rb);
   uint32_t elements_to_remove = (count > available) ? available : count;
 
   // Atomic increment of tail and decrement count
@@ -517,8 +517,8 @@ uint32_t RingBuffer_PopFrontMultiple(RingBuffer_t *rb, uint32_t count) {
 }
 
 // Peek the oldest element from the ring buffer (does not move tail)
-bool RingBuffer_PeekFront(const RingBuffer_t *rb, void *data) {
-  if (rb == NULL || RingBuffer_IsEmpty(rb)) { return false; }
+bool ring_peek_front(const ring_t *rb, void *data) {
+  if (rb == NULL || ring_is_empty(rb)) { return false; }
   uint32_t pos = rb->tail;
   void *src = (uint8_t *)rb->buffer + (pos * rb->element_size);
   memcpy(data, src, rb->element_size);
@@ -526,8 +526,8 @@ bool RingBuffer_PeekFront(const RingBuffer_t *rb, void *data) {
 }
 
 // Peek the newest element from the ring buffer (does not move head)
-bool RingBuffer_PeekBack(const RingBuffer_t *rb, void *data) {
-  if (rb == NULL || RingBuffer_IsEmpty(rb)) { return false; }
+bool ring_peek_back(const ring_t *rb, void *data) {
+  if (rb == NULL || ring_is_empty(rb)) { return false; }
   uint32_t pos = (rb->head == 0) ? (rb->size - 1) : (rb->head - 1);
   void *src = (uint8_t *)rb->buffer + (pos * rb->element_size);
   memcpy(data, src, rb->element_size);
@@ -536,9 +536,9 @@ bool RingBuffer_PeekBack(const RingBuffer_t *rb, void *data) {
 
 // Peek multiple elements from the back of the ring buffer (does not move head)
 // The newest element is at index 0, next newest at index 1, etc.
-uint32_t RingBuffer_PeekBackMultiple(const RingBuffer_t *rb, void *data, uint32_t count) {
-  if (rb == NULL || data == NULL || RingBuffer_IsEmpty(rb) || count == 0) { return 0; }
-  uint32_t available = RingBuffer_Available(rb);
+uint32_t ring_peek_back_multiple(const ring_t *rb, void *data, uint32_t count) {
+  if (rb == NULL || data == NULL || ring_is_empty(rb) || count == 0) { return 0; }
+  uint32_t available = ring_available(rb);
   if (count > available) { count = available; }
 
   for (uint32_t i = 0; i < count; ++i) {
@@ -553,9 +553,9 @@ uint32_t RingBuffer_PeekBackMultiple(const RingBuffer_t *rb, void *data, uint32_
 
 // Peek multiple elements from the front of the ring buffer (does not move tail)
 // The oldest element is at index 0, next oldest at index 1, etc.
-uint32_t RingBuffer_PeekFrontMultiple(const RingBuffer_t *rb, void *data, uint32_t count) {
-  if (rb == NULL || data == NULL || RingBuffer_IsEmpty(rb) || count == 0) { return 0; }
-  uint32_t available = RingBuffer_Available(rb);
+uint32_t ring_peek_front_multiple(const ring_t *rb, void *data, uint32_t count) {
+  if (rb == NULL || data == NULL || ring_is_empty(rb) || count == 0) { return 0; }
+  uint32_t available = ring_available(rb);
   if (count > available) { count = available; }
 
   for (uint32_t i = 0; i < count; ++i) {
@@ -567,7 +567,7 @@ uint32_t RingBuffer_PeekFrontMultiple(const RingBuffer_t *rb, void *data, uint32
 }
 
 // Dump all elements from source ring buffer to destination ring buffer (direct buffer copy)
-uint32_t RingBuffer_DumpToRing(RingBuffer_t *src_rb, RingBuffer_t *dst_rb, bool preserve_source) {
+uint32_t ring_dump(ring_t *src_rb, ring_t *dst_rb, bool preserve_source) {
   if (src_rb == NULL || dst_rb == NULL) {
     return 0;
   }
@@ -578,8 +578,8 @@ uint32_t RingBuffer_DumpToRing(RingBuffer_t *src_rb, RingBuffer_t *dst_rb, bool 
   }
   
   // Get available elements in source and free space in destination
-  uint32_t src_available = RingBuffer_Available(src_rb);
-  uint32_t dst_free = RingBuffer_Free(dst_rb);
+  uint32_t src_available = ring_available(src_rb);
+  uint32_t dst_free = ring_get_free(dst_rb);
   
   if (src_available == 0) {
     return 0;  // Nothing to copy
@@ -666,7 +666,7 @@ uint32_t RingBuffer_DumpToRing(RingBuffer_t *src_rb, RingBuffer_t *dst_rb, bool 
 }
 
 // Dump limited number of elements from source ring buffer to destination ring buffer (direct buffer copy)
-uint32_t RingBuffer_DumpToRingLimited(RingBuffer_t *src_rb, RingBuffer_t *dst_rb, uint32_t max_count, bool preserve_source) {
+uint32_t ring_dump_count(ring_t *src_rb, ring_t *dst_rb, uint32_t max_count, bool preserve_source) {
   if (src_rb == NULL || dst_rb == NULL || max_count == 0) {
     return 0;
   }
@@ -677,8 +677,8 @@ uint32_t RingBuffer_DumpToRingLimited(RingBuffer_t *src_rb, RingBuffer_t *dst_rb
   }
   
   // Get available elements in source and free space in destination
-  uint32_t src_available = RingBuffer_Available(src_rb);
-  uint32_t dst_free = RingBuffer_Free(dst_rb);
+  uint32_t src_available = ring_available(src_rb);
+  uint32_t dst_free = ring_get_free(dst_rb);
   
   if (src_available == 0) {
     return 0;  // Nothing to copy
