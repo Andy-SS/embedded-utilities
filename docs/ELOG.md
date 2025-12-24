@@ -248,23 +248,225 @@ void task2(void *pvParameters) {
 }
 ```
 
-#### ThreadX Setup
+#### ThreadX Setup (Detailed Implementation)
+
+For detailed step-by-step integration, see the "Quick Start - ThreadX Integration" section above.
+
+**Summary:**
+- Call `LOG_INIT_WITH_CONSOLE_AUTO()` early in `main()` before RTOS starts
+- In `tx_application_define()`, at the very end:
+  1. Call `elog_register_mutex_callbacks(&threadx_mutex_callbacks)`
+  2. Call `elog_update_RTOS_ready(true)`
+- Use logging macros anywhere - thread safety is automatic after RTOS startup
+
+**Thread-Safe Logging:**
 ```c
-#define ELOG_THREAD_SAFE 1
-#define ELOG_RTOS_TYPE ELOG_RTOS_THREADX
+// Before RTOS: logging works without mutex
+printLOG(ELOG_MD_DEFAULT, "Early init");
 
-#include "tx_api.h"
-#include "eLog.h"
+// After RTOS: logging is protected by mutex automatically
+ELOG_INFO(ELOG_MD_MAIN, "Thread-safe: mutex active");
+ELOG_ERROR(ELOG_MD_MAIN, "Safe to call from any thread");
+```
 
-void thread_entry(ULONG thread_input) {
+### Quick Start - ThreadX Integration
+
+The recommended pattern for ThreadX projects:
+
+```c
+// ============================================
+// IN main.c - Early Hardware Initialization
+// ============================================
+int main(void) {
+    // Hardware setup
+    HAL_Init();
+    SystemClock_Config();
+    
+    // *** Initialize eLog EARLY - before RTOS starts ***
     LOG_INIT_WITH_CONSOLE_AUTO();
+    printLOG(ELOG_MD_DEFAULT, "Hardware initialized, starting BLE stack...");
+    
+    // BLE/Platform initialization
+    MX_APPE_Init();
+    
+    printLOG(ELOG_MD_DEFAULT, "Starting ThreadX RTOS...");
+    MX_ThreadX_Init();  // This starts RTOS - doesn't return
+    
+    // Never reached
+    while(1);
+}
+
+// ============================================
+// IN rtos.c - RTOS Kernel Initialization
+// ============================================
+
+// Define ThreadX mutex callbacks
+#if (ELOG_THREAD_SAFE == 1)
+static TX_MUTEX elog_mutex;
+
+elog_mutex_result_t threadx_mutex_create(void) {
+  UINT status = tx_mutex_create(&elog_mutex, "eLog_Mutex", TX_NO_INHERIT);
+  return (status == TX_SUCCESS) ? ELOG_MUTEX_OK : ELOG_MUTEX_ERROR;
+}
+
+elog_mutex_result_t threadx_mutex_take(uint32_t timeout_ms) {
+  UINT status = tx_mutex_get(&elog_mutex, timeout_ms * TX_TIMER_TICKS_PER_SECOND / 1000);
+  if (status == TX_SUCCESS) return ELOG_MUTEX_OK;
+  else if (status == TX_NOT_AVAILABLE) return ELOG_MUTEX_TIMEOUT;
+  else return ELOG_MUTEX_ERROR;
+}
+
+elog_mutex_result_t threadx_mutex_give(void) {
+  UINT status = tx_mutex_put(&elog_mutex);
+  return (status == TX_SUCCESS) ? ELOG_MUTEX_OK : ELOG_MUTEX_ERROR;
+}
+
+elog_mutex_result_t threadx_mutex_delete(void) {
+  UINT status = tx_mutex_delete(&elog_mutex);
+  return (status == TX_SUCCESS) ? ELOG_MUTEX_OK : ELOG_MUTEX_ERROR;
+}
+
+const elog_mutex_callbacks_t threadx_mutex_callbacks = {
+  .create = threadx_mutex_create,
+  .take = threadx_mutex_take,
+  .give = threadx_mutex_give,
+  .delete = threadx_mutex_delete
+};
+#endif
+
+// Called by ThreadX during kernel startup
+VOID tx_application_define(VOID *first_unused_memory) {
+    // Create byte pools
+    tx_byte_pool_create(&tx_app_byte_pool, "App memory pool", 
+                        tx_byte_pool_buffer, TX_APP_MEM_POOL_SIZE);
+    
+    // Create all RTOS objects (threads, semaphores, mutexes, etc.)
+    // ... thread creation, semaphore creation, etc. ...
+    
+    // *** AT END: Register mutex and enable thread-safe logging ***
+    #if (ELOG_THREAD_SAFE == 1)
+    elog_register_mutex_callbacks(&threadx_mutex_callbacks);  // Must be BEFORE next line
+    #endif
+    elog_update_RTOS_ready(true);  // Enable thread safety - do this LAST
+    printLOG(ELOG_MD_DEFAULT, "RTOS ready - thread-safe logging enabled");
+}
+
+// ============================================
+// IN ANY THREAD - Logging is now thread-safe
+// ============================================
+void TaskEntry(ULONG thread_input) {
+    printLOG(ELOG_MD_DEFAULT, "Task started - mutex protection active");
     
     while(1) {
-        ELOG_INFO(ELOG_MD_MAIN, "ThreadX thread [%s] executing", elog_get_task_name());
-        tx_thread_sleep(100);
+        ELOG_DEBUG(ELOG_MD_MAIN, "Task executing - safe for concurrent logging");
+        tx_thread_sleep(1000);
     }
 }
 ```
+
+**Key Initialization Points:**
+1. ✅ `LOG_INIT_WITH_CONSOLE_AUTO()` - called in `main()` BEFORE RTOS starts
+2. ✅ `elog_register_mutex_callbacks()` - called in `tx_application_define()` at END
+3. ✅ `elog_update_RTOS_ready(true)` - called LAST in `tx_application_define()`
+4. ✅ Logging works at all stages with automatic thread safety when RTOS is ready
+
+
+
+**Proper ThreadX Integration Pattern - Key Principles:**
+
+```
+Phase 1: Early Initialization (NO RTOS YET)
+├─ LOG_INIT_WITH_CONSOLE_AUTO()           ← Initialize eLog (non-threaded mode)
+├─ printLOG(...)                           ← Logging works without thread safety
+└─ System setup continues...
+
+Phase 2: RTOS Setup (tx_application_define)
+├─ Create byte pools
+├─ Create threads/semaphores/mutexes
+├─ Create RTOS objects...
+└─ AT END OF FUNCTION:
+   ├─ elog_register_mutex_callbacks()      ← Register ThreadX callbacks
+   └─ elog_update_RTOS_ready(true)         ← Enable thread-safe logging
+
+Phase 3: Runtime (ALL THREADS RUNNING)
+└─ All logging calls automatically use mutex protection
+```
+
+**Detailed Implementation:**
+
+```c
+// Early in initialization (before RTOS)
+void main(void) {
+    HAL_Init();
+    // ... device configuration ...
+    
+    // Initialize logging early - runs WITHOUT thread safety yet
+    LOG_INIT_WITH_CONSOLE_AUTO();
+    printLOG(ELOG_MD_DEFAULT, "System starting...");
+    
+    // ... continue setup ...
+    tx_kernel_enter();  // Start ThreadX RTOS
+}
+
+// In tx_application_define (called by ThreadX kernel during startup)
+VOID tx_application_define(VOID *first_unused_memory) {
+    // Create byte pools
+    tx_byte_pool_create(&tx_app_byte_pool, "Tx App memory pool", 
+                        tx_byte_pool_buffer, TX_APP_MEM_POOL_SIZE);
+    
+    // Create threads, semaphores, mutexes, etc.
+    tx_thread_create(&TaskIdleThread, "TaskIdle", TaskIdleEntry, 0,
+                     task_stack, TASK_STACK_SIZE,
+                     TASK_PRIORITY, TASK_PRIORITY,
+                     TX_NO_TIME_SLICE, TX_AUTO_START);
+    
+    // ... create more system objects ...
+    
+    /* CRITICAL: Register mutex callbacks BEFORE enabling thread safety */
+    #if (ELOG_THREAD_SAFE == 1)
+    elog_register_mutex_callbacks(&threadx_mutex_callbacks);
+    #endif
+    
+    /* CRITICAL: Call ONLY AT END to enable thread-safe logging */
+    elog_update_RTOS_ready(true);
+    printLOG(ELOG_MD_DEFAULT, "RTOS ready - thread-safe logging enabled");
+}
+
+// In any thread (logging is now thread-safe)
+void TaskIdleEntry(ULONG thread_input) {
+    printLOG(ELOG_MD_DEFAULT, "Thread started - logging is protected by mutex");
+    
+    while(1) {
+        ELOG_INFO(ELOG_MD_MAIN, "Safe to log from multiple threads");
+        tx_thread_sleep(1000);
+    }
+}
+```
+
+**Key Points:**
+1. **Early Init**: `LOG_INIT_WITH_CONSOLE_AUTO()` can be called BEFORE RTOS starts
+   - Enables logging during device initialization
+   - Runs without thread safety (no RTOS yet)
+   
+2. **Mid RTOS Init**: Build all RTOS objects normally in `tx_application_define()`
+   - Logging still works without thread safety
+   - Threads may log but RTOS not fully started yet
+   
+3. **End of RTOS Init**: At END of `tx_application_define()`:
+   - First call: `elog_register_mutex_callbacks()` - registers ThreadX callbacks
+   - Then call: `elog_update_RTOS_ready(true)` - enables mutex protection
+   
+4. **Runtime**: All logging is protected by mutex automatically
+   - No changes to logging code needed
+   - Safe for concurrent logging from multiple threads
+
+**Thread Safety Behavior:**
+- Before `elog_update_RTOS_ready(true)`: No mutex protection (but RTOS not running yet anyway)
+- After `elog_update_RTOS_ready(true)`: All logging calls use mutex protection
+- Timeout on mutex: Logging is skipped (prevents deadlock)
+- Graceful degradation: Works with or without RTOS
+
+
 
 #### Bare Metal (No RTOS)
 ```c
@@ -286,19 +488,33 @@ int main(void) {
 
 ### Thread-Safe API Functions
 ```c
-/* Thread-safe versions (automatically used when ELOG_THREAD_SAFE=1) */
-void elog_message_safe(elog_level_t level, const char *fmt, ...);
-void elog_message_with_location_safe(elog_level_t level, const char *file, const char *func, int line, const char *fmt, ...);
-elog_err_t elog_subscribe_safe(log_subscriber_t fn, elog_level_t threshold);
-elog_err_t elog_unsubscribe_safe(log_subscriber_t fn);
+/* Core thread-safe functions (automatically protect access with mutex when ELOG_THREAD_SAFE=1) */
+void elog_message(elog_module_t module, elog_level_t level, const char *fmt, ...);
+void elog_message_with_location(elog_module_t module, elog_level_t level, const char *file, const char *func, int line, const char *fmt, ...);
+elog_err_t elog_subscribe(log_subscriber_t fn, elog_level_t threshold);
+elog_err_t elog_unsubscribe(log_subscriber_t fn);
 
-/* Task information functions */
-const char *elog_get_task_name(void);    /* Get current task name */
-uint32_t elog_get_task_id(void);         /* Get current task ID */
+/* RTOS registration and management */
+elog_err_t elog_register_mutex_callbacks(const elog_mutex_callbacks_t *callbacks);  /* Register RTOS mutex callbacks */
+void elog_update_RTOS_ready(bool ready);                                            /* Signal RTOS is ready for thread safety */
 
-/* Thread-aware console subscriber */
-void elog_console_subscriber_with_thread(elog_level_t level, const char *msg);
+/* Mutex callback registration structure */
+typedef struct {
+  elog_mutex_create_fn create;   /* Create mutex callback */
+  elog_mutex_take_fn take;       /* Acquire mutex callback */
+  elog_mutex_give_fn give;       /* Release mutex callback */
+  elog_mutex_delete_fn delete;   /* Delete mutex callback */
+} elog_mutex_callbacks_t;
+
+/* Mutex timeout configuration */
+#define ELOG_MUTEX_TIMEOUT_MS 100      /* Timeout in milliseconds for mutex operations */
 ```
+
+**Thread Safety Behavior:**
+- When `ELOG_THREAD_SAFE=1` and `RTOS_READY=true`: All logging calls are protected by mutex
+- When `ELOG_THREAD_SAFE=1` but `RTOS_READY=false`: Logging calls proceed without mutex (RTOS not yet initialized)
+- When `ELOG_THREAD_SAFE=0`: No mutex protection (bare metal or disabled threading)
+- Mutex timeout is configurable - if timeout occurs, logging is skipped
 
 ### Performance Considerations
 - **Thread Safety Overhead**: ~50-100 CPU cycles per log call (mutex operations)
@@ -310,9 +526,11 @@ void elog_console_subscriber_with_thread(elog_level_t level, const char *msg);
 
 - **Unified Error Codes**: Single comprehensive `elog_error_t` enum (0x00-0xFF) consolidating logging system errors and MCU subsystem errors organized by category
 - **Per-Module Log Thresholds**: Control log verbosity for each module at runtime using `elog_set_module_threshold()` and `elog_get_module_threshold()`
-- **Enhanced Examples**: New examples demonstrating unified error codes across all subsystems (logging 0x00-0x0F, system 0x10-0x1F, communication 0x20-0x3F, sensors 0x40-0x5F, power 0x60-0x7F, storage 0x80-0x9F, RTOS 0xE0-0xEF, critical 0xF0-0xFF)
-- **RTOS Ready Configuration**: Improved thread-safe implementations with automatic fallback for non-RTOS environments
-- **Backward Compatibility**: Legacy typedef `log_err_t` maintains compatibility with existing code
+- **Thread-Safe Mutex Registration**: `elog_register_mutex_callbacks()` and `elog_update_RTOS_ready()` provide flexible RTOS integration without modifying eLog core
+- **RTOS Ready Status Management**: Automatic fallback to non-threaded mode during RTOS initialization, switches to thread-safe mode when `elog_update_RTOS_ready(true)` is called
+- **Mutex Callback Pattern**: Support for any RTOS via callback registration (FreeRTOS, ThreadX, CMSIS-RTOS, custom implementations)
+- **Enhanced Examples**: New examples demonstrating unified error codes across all subsystems and ThreadX integration patterns
+- **Backward Compatibility**: Legacy macros (`printLOG()`, `printIF()`, etc.) continue to work unchanged
 
 ## ⚙️ Configuration Options
 

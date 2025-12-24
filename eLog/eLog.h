@@ -32,7 +32,7 @@
 // /* Default eLog Configuration - Override these in your project if needed */
 #define ELOG_THREAD_SAFE 1
 #define ELOG_RTOS_TYPE ELOG_RTOS_THREADX
-#define ELOG_MUTEX_TIMEOUT_MS 100
+#define ELOG_MUTEX_TIMEOUT_MS 500
 
 // Module list configuration
 typedef enum {
@@ -49,10 +49,6 @@ typedef enum {
   ELOG_MD_COMM,
   ELOG_MD_MAX
 } elog_module_t;
-
-/* ========================================================================== */
-/* Enhanced Logging Configuration (continued) */
-/* ========================================================================== */
 
 /* Local definitions for independence from app_conf.h */
 #ifndef YES
@@ -125,64 +121,33 @@ static inline const char *debug_get_filename(const char *fullpath) {
 #endif
 
 /* ========================================================================== */
-/* RTOS Threading Support Types */
+/* Thread Safety Configuration */
 /* ========================================================================== */
-
-/* RTOS-specific includes based on configuration */
 #if (ELOG_THREAD_SAFE == 1)
-  extern volatile bool RTOS_READY; // Flag to indicate if RTOS is ready
-  #if (ELOG_RTOS_TYPE == ELOG_RTOS_FREERTOS)
-    /* Include FreeRTOS headers */
-    #include "FreeRTOS.h"
-    #include "semphr.h"
-    #include "task.h"
-  #elif (ELOG_RTOS_TYPE == ELOG_RTOS_THREADX)
-    /* Include ThreadX headers */
-    #include "tx_api.h"
-  #elif (ELOG_RTOS_TYPE == ELOG_RTOS_CMSIS)
-    /* Include CMSIS-RTOS headers */
-    #include "cmsis_os.h"
-  #endif
-#endif
-
-#if (ELOG_THREAD_SAFE == 1)
-
-/* RTOS-abstracted mutex type */
-#if (ELOG_RTOS_TYPE == ELOG_RTOS_FREERTOS)
-  #ifdef INC_FREERTOS_H
-    typedef SemaphoreHandle_t elog_mutex_t;
-    #define ELOG_MUTEX_TIMEOUT pdMS_TO_TICKS(ELOG_MUTEX_TIMEOUT_MS)
-  #else
-    typedef void* elog_mutex_t;  /* Fallback when FreeRTOS not available */
-    #define ELOG_MUTEX_TIMEOUT 0
-  #endif
-#elif (ELOG_RTOS_TYPE == ELOG_RTOS_THREADX)
-  #ifdef TX_API_H
-    typedef TX_MUTEX elog_mutex_t;
-  #else
-    typedef void* elog_mutex_t;  /* Fallback when ThreadX not available */
-  #endif
-#elif (ELOG_RTOS_TYPE == ELOG_RTOS_CMSIS)
-  #ifdef CMSIS_OS_H_
-    typedef osMutexId_t elog_mutex_t;
-    #define ELOG_MUTEX_TIMEOUT ELOG_MUTEX_TIMEOUT_MS
-  #else
-    typedef void* elog_mutex_t;  /* Fallback when CMSIS-RTOS not available */
-    #define ELOG_MUTEX_TIMEOUT 0
-  #endif
-#else
-  /* Bare metal - no mutex needed */
-  typedef int elog_mutex_t;
-  #define ELOG_MUTEX_TIMEOUT 0
-#endif
-
-/* Thread safety result codes */
+/* Mutex result codes */
 typedef enum {
-  ELOG_THREAD_OK = 0,
-  ELOG_THREAD_TIMEOUT,
-  ELOG_THREAD_ERROR,
-  ELOG_THREAD_NOT_SUPPORTED
-} elog_thread_result_t;
+  ELOG_MUTEX_OK = 0,
+  ELOG_MUTEX_TIMEOUT,
+  ELOG_MUTEX_ERROR,
+  ELOG_MUTEX_NOT_SUPPORTED
+} elog_mutex_result_t;
+
+/* Mutex Callback Function Prototype */
+typedef elog_mutex_result_t (*elog_mutex_create_fn)(void);
+typedef elog_mutex_result_t (*elog_mutex_take_fn)(uint32_t timeout_ms);
+typedef elog_mutex_result_t (*elog_mutex_give_fn)(void);
+typedef elog_mutex_result_t (*elog_mutex_delete_fn)(void);
+
+/* Mutex callbacks structure */
+typedef struct {
+  elog_mutex_create_fn create;
+  elog_mutex_take_fn take;
+  elog_mutex_give_fn give;
+  elog_mutex_delete_fn delete;
+} elog_mutex_callbacks_t;
+
+/* Mutex type definition */
+typedef void* elog_mutex_t;
 
 #endif /* ELOG_THREAD_SAFE */
 
@@ -220,6 +185,8 @@ typedef enum {
   ELOG_ERR_SUBSCRIBERS_EXCEEDED = 0x01, /*!< Maximum subscribers exceeded */
   ELOG_ERR_NOT_SUBSCRIBED    = 0x02,    /*!< Subscriber not found */
   ELOG_ERR_INVALID_LEVEL     = 0x03,    /*!< Invalid log level */
+  ELOG_ERR_INVALID_PARAM     = 0x04,    /*!< Invalid parameter */
+  ELOG_ERR_INVALID_STATE     = 0x05,    /*!< Invalid state for operation */
 
   /* System Error Codes (0x10-0x1F) */
   ELOG_SYS_ERR_INIT          = 0x10,    /*!< System initialization error */
@@ -387,28 +354,13 @@ void elog_message(elog_module_t module, elog_level_t level, const char *fmt, ...
  */
 void elog_message_with_location(elog_module_t module, elog_level_t level, const char *file, const char *func, int line, const char *fmt, ...);
 
-/**
- * @brief Thread-safe version of log_subscribe
- * @param fn: Function to call for each log message
- * @param threshold: Minimum level to send to this subscriber
- * @return Error code
- */
-elog_err_t elog_subscribe(log_subscriber_t fn, elog_level_t threshold);
-
-/**
- * @brief Thread-safe version of log_unsubscribe
- * @param fn: Function to unsubscribe
- * @return Error code
- */
-elog_err_t elog_unsubscribe(log_subscriber_t fn);
-
 #if (ELOG_THREAD_SAFE == 1)
-/* Thread info functions for enhanced debugging (only available when threading enabled) */
-const char *elog_get_task_name(void);
-uint32_t elog_get_task_id(void);
-
-/* Example console subscriber with thread info */
-extern void elog_console_subscriber_with_thread(elog_level_t level, const char *msg);
+/**
+ * @brief Register mutex callback functions with eLog
+ * @param callbacks: Pointer to callback structure (NULL to disable thread safety)
+ * @return ELOG_ERR_NONE on success
+ */
+elog_err_t elog_register_mutex_callbacks(const elog_mutex_callbacks_t *callbacks);
 #endif
 
 /* ========================================================================== */
