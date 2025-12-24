@@ -20,7 +20,7 @@
 /* Thread safety configuration */
 #define ELOG_THREAD_SAFE 1
 #define ELOG_RTOS_TYPE ELOG_RTOS_THREADX
-#define ELOG_MUTEX_TIMEOUT_MS 100
+#define ELOG_MUTEX_TIMEOUT_MS 500    /* Increased from 100ms for production robustness */
 
 /* Include ThreadX headers before eLog.h in your source files */
 #include "tx_api.h"
@@ -28,12 +28,12 @@
 
 /* Usage in ThreadX threads: */
 void thread_entry(ULONG thread_input) {
-    // Set per-module log threshold for this thread's module
-    elog_set_module_threshold(ELOG_MD_THREAD, ELOG_LEVEL_DEBUG);
+    // Set per-module log threshold (O(1) direct array indexing - fast!)
+    elog_set_module_threshold(ELOG_MD_MAIN, ELOG_LEVEL_DEBUG);
 
     while(1) {
-        ELOG_INFO(ELOG_MD_THREAD, "Thread [%s] processing", elog_get_task_name());
-        ELOG_DEBUG(ELOG_MD_THREAD, "Debug info for ThreadX thread");
+        ELOG_INFO(ELOG_MD_MAIN, "Thread processing");
+        ELOG_DEBUG(ELOG_MD_MAIN, "Debug info for ThreadX thread");
         tx_thread_sleep(100);
     }
 }
@@ -48,7 +48,7 @@ void thread_entry(ULONG thread_input) {
 /* Thread safety configuration */
 #define ELOG_THREAD_SAFE 1
 #define ELOG_RTOS_TYPE ELOG_RTOS_FREERTOS
-#define ELOG_MUTEX_TIMEOUT_MS 100
+#define ELOG_MUTEX_TIMEOUT_MS 500    /* Increased from 100ms for production robustness */
 
 /* Include FreeRTOS headers before eLog.h in your source files */
 /* #include "FreeRTOS.h" */
@@ -80,7 +80,7 @@ void vTask1(void *pvParameters) {
 /* Thread safety configuration */
 #define ELOG_THREAD_SAFE 1
 #define ELOG_RTOS_TYPE ELOG_RTOS_THREADX
-#define ELOG_MUTEX_TIMEOUT_MS 100
+#define ELOG_MUTEX_TIMEOUT_MS 500    /* Increased from 100ms for production robustness */
 
 /* Include ThreadX headers before eLog.h in your source files */
 /* #include "tx_api.h" */
@@ -92,7 +92,7 @@ void thread_entry(ULONG thread_input) {
     elog_set_module_threshold(ELOG_MD_THREAD, ELOG_LEVEL_DEBUG);
 
     while(1) {
-        ELOG_INFO(ELOG_MD_THREAD, "Thread [%s] processing", elog_get_task_name());
+        ELOG_INFO(ELOG_MD_THREAD, "Thread processing");
         ELOG_WARNING(ELOG_MD_THREAD, "Warning info for ThreadX thread");
         tx_thread_sleep(100);
     }
@@ -109,7 +109,7 @@ void thread_entry(ULONG thread_input) {
 /* Thread safety configuration */
 #define ELOG_THREAD_SAFE 1
 #define ELOG_RTOS_TYPE ELOG_RTOS_CMSIS
-#define ELOG_MUTEX_TIMEOUT_MS 100
+#define ELOG_MUTEX_TIMEOUT_MS 500    /* Increased from 100ms for production robustness */
 
 /* Include CMSIS-RTOS headers before eLog.h in your source files */
 /* #include "cmsis_os.h" */
@@ -190,11 +190,13 @@ int main(void) {
 /*
  * 1. Add eLog.h and eLog.c to your project
  * 2. Configure ELOG_THREAD_SAFE and ELOG_RTOS_TYPE appropriately
- * 3. Call LOG_INIT_WITH_CONSOLE_AUTO() early in your application
- * 4. Your existing debug macros work immediately
- * 5. Gradually adopt new LOG_xxx macros for enhanced features
- * 6. Add custom subscribers for file/network/memory logging as needed
- * 7. Use elog_set_file_threshold() for per-file/module log control
+ * 3. Set ELOG_MUTEX_TIMEOUT_MS to 500ms (production-recommended)
+ * 4. Call LOG_INIT_WITH_CONSOLE_AUTO() early in your application
+ * 5. Your existing debug macros work immediately
+ * 6. Gradually adopt new ELOG_xxx macros for enhanced features
+ * 7. Add custom subscribers for file/network/memory logging as needed
+ * 8. Use elog_set_module_threshold() for per-module log level control (O(1) operation)
+ * 9. Module threshold management is now simplified without 'active' flag complexity
  */
 
 #endif /* ELOG_CONFIG_EXAMPLES_H */

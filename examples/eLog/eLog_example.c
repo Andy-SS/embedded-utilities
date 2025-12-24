@@ -18,11 +18,12 @@
 /* ========================================================================== */
 
 /**
- * @brief  Demonstrate per-module log threshold usage
+ * @brief  Demonstrate per-module log threshold usage (O(1) direct indexing)
+ * @note   Module threshold lookup is optimized via direct array indexing
  * @retval None
  */
 void perModuleThresholdExample(void) {
-    // Set log threshold for this module
+    // Set log threshold for this module - instant O(1) operation
     elog_set_module_threshold(ELOG_MD_MAIN, ELOG_LEVEL_DEBUG);
 
     ELOG_INFO(ELOG_MD_MAIN, "This info message will be shown if threshold allows");
@@ -83,20 +84,23 @@ void customMemorySubscriber(elog_level_t level, const char *msg) {
 }
 
 /**
- * @brief  Demonstrate multiple subscribers
+ * @brief  Demonstrate multiple subscribers (simplified management)
+ * @note   Subscriber entries are actively removed on unsubscribe (no 'soft delete')
  * @retval None
  */
 void multipleSubscribersExample(void) {
   LOG_INIT();
 
+  // Subscribe multiple outputs at different thresholds
   LOG_SUBSCRIBE(elog_console_subscriber, ELOG_LEVEL_DEBUG);
   LOG_SUBSCRIBE(customFileSubscriber, ELOG_LEVEL_DEBUG);
   LOG_SUBSCRIBE(customMemorySubscriber, ELOG_LEVEL_ERROR);
 
   ELOG_INFO(ELOG_MD_MAIN, "=== Multiple Subscribers Demo ===");
 
+  // Demonstrate threshold-based filtering
   ELOG_TRACE(ELOG_MD_MAIN, "This trace message won't appear anywhere (threshold too low)");
-  ELOG_DEBUG(ELOG_MD_MAIN, "This debug message only goes to console");
+  ELOG_DEBUG(ELOG_MD_MAIN, "This debug message goes to console and file");
   ELOG_INFO(ELOG_MD_MAIN, "This info message goes to console and file");
   ELOG_WARNING(ELOG_MD_MAIN, "This warning goes to console and file");
   ELOG_ERROR(ELOG_MD_MAIN, "This error goes to console, file, and memory");
@@ -288,7 +292,7 @@ void simpleAppInitializationExample(void) {
  * @retval None
  */
 void rtosReadinessExample(void) {
-    elogUpdateRtosReady(true);
+    elog_update_RTOS_ready(true);
     ELOG_INFO(ELOG_MD_MAIN, "RTOS is now ready for logging");
 }
 

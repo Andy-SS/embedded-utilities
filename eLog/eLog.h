@@ -1,7 +1,7 @@
 /***********************************************************
 * @file	eLog.h
 * @author	Andy Chen (clgm216@gmail.com)
-* @version	0.05
+* @version	0.06
 * @date	2024-09-10
 * @brief  Enhanced logging system inspired by uLog with multiple subscribers
 *         INDEPENDENT HEADER - No external dependencies (except standard C)

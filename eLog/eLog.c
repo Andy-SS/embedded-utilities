@@ -1,7 +1,7 @@
 /***********************************************************
  * @file	eLog.c
  * @author	Andy Chen (clgm216@gmail.com)
- * @version	0.05
+ * @version	0.06
  * @date	2024-09-10
  * @brief  Enhanced logging system implementation inspired by uLog
  *         INDEPENDENT IMPLEMENTATION - No external dependencies
@@ -31,7 +31,6 @@ typedef struct
 {
   log_subscriber_t fn;
   elog_level_t threshold;
-  int active;
 } subscriber_entry_t;
 
 /* Static storage for subscribers */
@@ -68,7 +67,6 @@ void elog_init(void)
   {
     s_subscribers[i].fn = NULL;
     s_subscribers[i].threshold = ELOG_LEVEL_ALWAYS;
-    s_subscribers[i].active = 0;
   }
   s_num_subscribers = 0;
   
@@ -294,12 +292,10 @@ void elog_message(elog_module_t module, elog_level_t level, const char *fmt, ...
   vsnprintf(s_message_buffer, sizeof(s_message_buffer), fmt, args);
   va_end(args);
 
-  /* Send to all active subscribers */
+  /* Send to all subscribers */
   for (int i = 0; i < s_num_subscribers; i++)
   {
-    // printf("[DEBUG] Checking subscriber %d: active=%d, threshold=%d, level=%d.\n", i,
-    // s_subscribers[i].active, s_subscribers[i].threshold, level);
-    if (s_subscribers[i].active && level >= s_subscribers[i].threshold)
+    if (level >= s_subscribers[i].threshold)
     {
       // printf("[DEBUG] Sending message to subscriber %d.\n", i);
       s_subscribers[i].fn(level, s_message_buffer);
@@ -349,10 +345,10 @@ void elog_message_with_location(elog_module_t module, elog_level_t level, const 
     s_message_buffer[sizeof(s_message_buffer) - 1] = '\0'; /* Ensure null termination */
   }
 
-  /* Send to all active subscribers */
+  /* Send to all subscribers */
   for (int i = 0; i < s_num_subscribers; i++)
   {
-    if (s_subscribers[i].active && level >= s_subscribers[i].threshold)
+    if (level >= s_subscribers[i].threshold)
     {
       s_subscribers[i].fn(level, s_message_buffer);
     }
@@ -383,7 +379,7 @@ elog_err_t elog_subscribe(log_subscriber_t fn, elog_level_t threshold)
     /* Check if already subscribed */
     for (int i = 0; i < s_num_subscribers; i++)
     {
-      if (s_subscribers[i].fn == fn && s_subscribers[i].active)
+      if (s_subscribers[i].fn == fn)
       {
         /* Update existing subscription */
         s_subscribers[i].threshold = threshold;
@@ -395,7 +391,6 @@ elog_err_t elog_subscribe(log_subscriber_t fn, elog_level_t threshold)
     /* Add new subscriber */
     s_subscribers[s_num_subscribers].fn = fn;
     s_subscribers[s_num_subscribers].threshold = threshold;
-    s_subscribers[s_num_subscribers].active = 1;
     s_num_subscribers++;
     result = ELOG_ERR_NONE;
   }
@@ -423,9 +418,8 @@ elog_err_t elog_unsubscribe(log_subscriber_t fn)
 
   for (int i = 0; i < s_num_subscribers; i++)
   {
-    if (s_subscribers[i].fn == fn && s_subscribers[i].active)
+    if (s_subscribers[i].fn == fn)
     {
-      s_subscribers[i].active = 0;
       result = ELOG_ERR_NONE;
       break;
     }

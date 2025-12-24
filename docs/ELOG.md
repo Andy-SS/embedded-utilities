@@ -99,8 +99,12 @@ You can set log levels for specific modules at runtime:
 #include "eLog.h"
 
 void sensorInit(void) {
-    elog_set_module_threshold(ELOG_MD_SENSOR, ELOG_LEVEL_DEBUG); // Enable debug logs for SENSOR module
-    ELOG_INFO(ELOG_MD_SENSOR, "Sensor initialized"); // Will be shown if threshold allows
+    // Set threshold for SENSOR module - instant O(1) operation
+    elog_set_module_threshold(ELOG_MD_SENSOR, ELOG_LEVEL_DEBUG);
+    
+    // Enable debug logs for SENSOR module only
+    ELOG_INFO(ELOG_MD_SENSOR, "Sensor initialized");
+    ELOG_DEBUG(ELOG_MD_SENSOR, "Sensor debug info visible");
 }
 ```
 
@@ -112,7 +116,9 @@ void sensorInit(void) {
 elog_err_t elog_set_module_threshold(elog_module_t module, elog_level_t threshold);
 elog_level_t elog_get_module_threshold(elog_module_t module);
 ```
-Use these functions to control logging verbosity for each module.
+**Performance**: O(1) direct array indexing for 12-module logging system (previously O(n) linear search).
+
+Use these functions to control logging verbosity for each module at runtime:
 
 ### Custom Subscribers
 ```c
@@ -218,7 +224,7 @@ printALWAYS(ELOG_MD_MAIN, "Always logged");
 // Options: ELOG_RTOS_FREERTOS, ELOG_RTOS_THREADX, ELOG_RTOS_CMSIS, ELOG_RTOS_NONE
 
 /* Mutex timeout configuration */
-#define ELOG_MUTEX_TIMEOUT_MS 100       /* Timeout in milliseconds */
+#define ELOG_MUTEX_TIMEOUT_MS 500       /* Timeout in milliseconds - increased for robustness */
 ```
 
 ### RTOS Integration Examples
@@ -386,10 +392,11 @@ Phase 2: RTOS Setup (tx_application_define)
 ├─ Create RTOS objects...
 └─ AT END OF FUNCTION:
    ├─ elog_register_mutex_callbacks()      ← Register ThreadX callbacks
-   └─ elog_update_RTOS_ready(true)         ← Enable thread-safe logging
+   ├─ elog_update_RTOS_ready(true)         ← Enable thread-safe logging
+   └─ ⚠️  NO logging inside this function after elog_update_RTOS_ready()
 
 Phase 3: Runtime (ALL THREADS RUNNING)
-└─ All logging calls automatically use mutex protection
+└─ All logging calls automatically use mutex protection with 500ms timeout
 ```
 
 **Detailed Implementation:**
@@ -428,8 +435,9 @@ VOID tx_application_define(VOID *first_unused_memory) {
     #endif
     
     /* CRITICAL: Call ONLY AT END to enable thread-safe logging */
+    /* NOTE: Removed printLOG from this function to prevent deadlock during init */
     elog_update_RTOS_ready(true);
-    printLOG(ELOG_MD_DEFAULT, "RTOS ready - thread-safe logging enabled");
+    /* Logging now protected by mutex - safe to call from any thread */
 }
 
 // In any thread (logging is now thread-safe)
@@ -463,7 +471,8 @@ void TaskIdleEntry(ULONG thread_input) {
 **Thread Safety Behavior:**
 - Before `elog_update_RTOS_ready(true)`: No mutex protection (but RTOS not running yet anyway)
 - After `elog_update_RTOS_ready(true)`: All logging calls use mutex protection
-- Timeout on mutex: Logging is skipped (prevents deadlock)
+- Mutex timeout: 500ms (graceful timeout prevents deadlock on severe overload)
+- Timeout behavior: Logging is skipped if mutex not available (safe failure mode)
 - Graceful degradation: Works with or without RTOS
 
 

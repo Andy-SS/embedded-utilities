@@ -96,6 +96,7 @@ void subscriber_management_example(void) {
 
   ELOG_ERROR(ELOG_MD_MAIN, "Error before unsubscribing network");
 
+  // Unsubscribe completely removes the entry (no 'soft delete' with 'active' flag)
   LOG_UNSUBSCRIBE(network_subscriber);
 
   ELOG_ERROR(ELOG_MD_MAIN, "Error after unsubscribing network - should only go to console");
@@ -196,9 +197,9 @@ void thread_safety_example(void) {
 
   ELOG_INFO(ELOG_MD_MAIN, "Thread safety is enabled (ELOG_THREAD_SAFE=%d)", ELOG_THREAD_SAFE);
   ELOG_INFO(ELOG_MD_MAIN, "RTOS type: %d", ELOG_RTOS_TYPE);
-  ELOG_INFO(ELOG_MD_MAIN, "Current task: %s (ID: 0x%08X)", elog_get_task_name(), (unsigned int)elog_get_task_id());
+  ELOG_INFO(ELOG_MD_MAIN, "Thread-safe logging enabled");
 
-  elog_err_t result = log_subscribe_safe(memory_subscriber, ELOG_LEVEL_DEBUG);
+  elog_err_t result = LOG_SUBSCRIBE(memory_subscriber, ELOG_LEVEL_DEBUG);
   if (result == ELOG_ERR_NONE) {
     ELOG_INFO(ELOG_MD_MAIN, "Successfully subscribed memory subscriber in thread-safe mode");
   } else {
@@ -213,10 +214,10 @@ void thread_safety_example(void) {
 void thread_aware_logging_example(void) {
   printf("\n=== Thread-Aware Logging Example ===\n");
   LOG_INIT();
-  LOG_SUBSCRIBE(elog_console_subscriber_with_thread, ELOG_LEVEL_DEBUG);
+  LOG_SUBSCRIBE(elog_console_subscriber, ELOG_LEVEL_DEBUG);
 
   ELOG_DEBUG(ELOG_MD_MAIN, "This message includes task name in output");
-  ELOG_INFO(ELOG_MD_MAIN, "Task information: %s", elog_get_task_name());
+  ELOG_INFO(ELOG_MD_MAIN, "Task information available from RTOS");
   ELOG_WARNING(ELOG_MD_MAIN, "Multi-threaded logging demonstration");
 
   printf("Thread-aware logging complete.\n");
@@ -224,7 +225,7 @@ void thread_aware_logging_example(void) {
 
 void simulated_multitask_example(void) {
   printf("\n=== Simulated Multi-Task Example ===\n");
-  LOG_INIT_WITH_THREAD_INFO();
+  LOG_INIT_WITH_CONSOLE_AUTO();
 
   ELOG_INFO(ELOG_MD_TASK_A, "Task A: Starting sensor initialization");
   ELOG_DEBUG(ELOG_MD_TASK_A, "Task A: I2C bus configured");
@@ -246,29 +247,27 @@ void rtos_features_example(void) {
 
 #if (ELOG_RTOS_TYPE == ELOG_RTOS_FREERTOS)
   ELOG_INFO(ELOG_MD_MAIN, "- FreeRTOS integration enabled");
-  ELOG_INFO(ELOG_MD_MAIN, "- Mutex timeout: %d ticks", ELOG_MUTEX_TIMEOUT_MS);
+  ELOG_INFO(ELOG_MD_MAIN, "- Mutex timeout: %d ms (prevents deadlock on severe overload)", ELOG_MUTEX_TIMEOUT_MS);
 #elif (ELOG_RTOS_TYPE == ELOG_RTOS_THREADX)
   ELOG_INFO(ELOG_MD_MAIN, "- ThreadX integration enabled");  
-  ELOG_INFO(ELOG_MD_MAIN, "- Mutex timeout: %d ticks", ELOG_MUTEX_TIMEOUT_MS);
+  ELOG_INFO(ELOG_MD_MAIN, "- Mutex timeout: %d ms (prevents deadlock on severe overload)", ELOG_MUTEX_TIMEOUT_MS);
 #elif (ELOG_RTOS_TYPE == ELOG_RTOS_CMSIS)
   ELOG_INFO(ELOG_MD_MAIN, "- CMSIS-RTOS integration enabled");
-  ELOG_INFO(ELOG_MD_MAIN, "- Mutex timeout: %d ms", ELOG_MUTEX_TIMEOUT_MS);
+  ELOG_INFO(ELOG_MD_MAIN, "- Mutex timeout: %d ms (prevents deadlock on severe overload)", ELOG_MUTEX_TIMEOUT_MS);
 #else
   ELOG_INFO(ELOG_MD_MAIN, "- Bare metal mode (no RTOS)");
 #endif
 
-  const char *task_name = elog_get_task_name();
   uint32_t task_id = elog_get_task_id();
 
-  ELOG_INFO(ELOG_MD_MAIN, "Current task: %s", task_name);
   ELOG_INFO(ELOG_MD_MAIN, "Task ID: 0x%08X", (unsigned int)task_id);
 
-  elog_err_t result = log_subscribe_safe(file_subscriber, ELOG_LEVEL_DEBUG);
+  elog_err_t result = LOG_SUBSCRIBE(file_subscriber, ELOG_LEVEL_DEBUG);
   ELOG_INFO(ELOG_MD_MAIN, "Subscribe result: %d", result);
 
   ELOG_WARNING(ELOG_MD_MAIN, "Test message to new subscriber");
 
-  result = log_unsubscribe_safe(file_subscriber);
+  result = LOG_UNSUBSCRIBE(file_subscriber);
   ELOG_INFO(ELOG_MD_MAIN, "Unsubscribe result: %d", result);
 
   printf("RTOS features demonstration complete.\n");
@@ -296,7 +295,7 @@ void performance_test_example(void) {
 #if (ELOG_THREAD_SAFE == 1)
   printf("Testing thread-safe logging performance...\n");
   for (int i = 0; i < 5; i++) {
-    elog_message_safe(ELOG_LEVEL_DEBUG, "Thread-safe performance test %d", i);
+    ELOG_DEBUG(ELOG_MD_MAIN, "Thread-safe performance test %d", i);
   }
 #endif
 
