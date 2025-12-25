@@ -16,15 +16,16 @@
 #include <stdlib.h>
 
 #if RING_USE_RTOS_MUTEX
-static ring_cs_callbacks_t *s_cs_callbacks = NULL;
+static mutex_callbacks_t *s_cs_callbacks = NULL;
+#define MUTEX_TIMEOUT_MS 1000
 
 /* NEW: Simple callback-based macros accepting mutex parameter */
 #ifdef ENTER_CRITICAL_SECTION
 #undef ENTER_CRITICAL_SECTION
 #endif
-#define ENTER_CRITICAL_SECTION(mutex) do { \
-  if (s_cs_callbacks && s_cs_callbacks->enter && (mutex)) { \
-    s_cs_callbacks->enter(mutex); \
+#define ENTER_CRITICAL_SECTION(mutex, time_out) do { \
+  if (s_cs_callbacks && s_cs_callbacks->acquire && (mutex)) { \
+    s_cs_callbacks->acquire(mutex, time_out); \
   } \
 } while(0)
 
@@ -32,8 +33,8 @@ static ring_cs_callbacks_t *s_cs_callbacks = NULL;
 #undef EXIT_CRITICAL_SECTION
 #endif
 #define EXIT_CRITICAL_SECTION(mutex) do { \
-  if (s_cs_callbacks && s_cs_callbacks->exit && (mutex)) { \
-    s_cs_callbacks->exit(mutex); \
+  if (s_cs_callbacks && s_cs_callbacks->release && (mutex)) { \
+    s_cs_callbacks->release(mutex); \
   } \
 } while(0)
 
@@ -42,9 +43,9 @@ static ring_cs_callbacks_t *s_cs_callbacks = NULL;
  * @param callbacks: Pointer to callback structure (NULL for no synchronization)
  * @return true on success
  */
-bool ring_register_cs_callbacks(const ring_cs_callbacks_t *callbacks)
+bool ring_register_cs_callbacks(const mutex_callbacks_t *callbacks)
 {
-  s_cs_callbacks = (ring_cs_callbacks_t *)callbacks;
+  s_cs_callbacks = (mutex_callbacks_t *)callbacks;
   return true;
 }
 
@@ -163,7 +164,7 @@ bool ring_is_owns_buffer(const ring_t *rb) {
 
 void ring_clear(ring_t *rb) {
   #if RING_USE_RTOS_MUTEX
-  ENTER_CRITICAL_SECTION(rb->mutex);
+  ENTER_CRITICAL_SECTION(rb->mutex, MUTEX_TIMEOUT_MS);
   #else
   ENTER_CRITICAL_SECTION();
   #endif
@@ -187,7 +188,7 @@ bool ring_is_full(const ring_t *rb) { return rb->count == rb->size; }
 bool ring_write(ring_t *rb, const void *data) {
   if (ring_is_full(rb)) { return false; }
   #if RING_USE_RTOS_MUTEX
-  ENTER_CRITICAL_SECTION(rb->mutex);
+  ENTER_CRITICAL_SECTION(rb->mutex, MUTEX_TIMEOUT_MS);
   #else
   ENTER_CRITICAL_SECTION();
   #endif
@@ -209,7 +210,7 @@ bool ring_push_front(ring_t *rb, const void *data) {
   if (rb == NULL) { return false; }
   
   #if RING_USE_RTOS_MUTEX
-  ENTER_CRITICAL_SECTION(rb->mutex);
+  ENTER_CRITICAL_SECTION(rb->mutex, MUTEX_TIMEOUT_MS);
   #else
   ENTER_CRITICAL_SECTION();
   #endif
@@ -242,7 +243,7 @@ uint32_t ring_push_back(ring_t *rb, const void *data, uint32_t count) {
   if (rb == NULL || data == NULL || count == 0) { return 0; }
 
   #if RING_USE_RTOS_MUTEX
-  ENTER_CRITICAL_SECTION(rb->mutex);
+  ENTER_CRITICAL_SECTION(rb->mutex, MUTEX_TIMEOUT_MS);
   #else
   ENTER_CRITICAL_SECTION();
   #endif
@@ -288,7 +289,7 @@ bool ring_read(ring_t *rb, void *data) {
   void *src = (uint8_t *)rb->buffer + (rb->tail * rb->element_size);
   memcpy(data, src, rb->element_size);
   #if RING_USE_RTOS_MUTEX
-  ENTER_CRITICAL_SECTION(rb->mutex);
+  ENTER_CRITICAL_SECTION(rb->mutex, MUTEX_TIMEOUT_MS);
   #else
   ENTER_CRITICAL_SECTION();
   #endif
@@ -337,7 +338,7 @@ uint32_t ring_write_multiple(ring_t *rb, const void *data, uint32_t count) {
   if (rb == NULL || data == NULL || count == 0) { return 0; }
 
   #if RING_USE_RTOS_MUTEX
-  ENTER_CRITICAL_SECTION(rb->mutex);
+  ENTER_CRITICAL_SECTION(rb->mutex, MUTEX_TIMEOUT_MS);
   #else
   ENTER_CRITICAL_SECTION();
   #endif
@@ -378,7 +379,7 @@ uint32_t ring_read_multiple(ring_t *rb, void *data, uint32_t count) {
   if (rb == NULL || data == NULL || count == 0) { return 0; }
 
   #if RING_USE_RTOS_MUTEX
-  ENTER_CRITICAL_SECTION(rb->mutex);
+  ENTER_CRITICAL_SECTION(rb->mutex, MUTEX_TIMEOUT_MS);
   #else
   ENTER_CRITICAL_SECTION();
   #endif
@@ -422,7 +423,7 @@ bool ring_pop_back(ring_t *rb) {
 
   // Atomic decrement of head and count
   #if RING_USE_RTOS_MUTEX
-  ENTER_CRITICAL_SECTION(rb->mutex);
+  ENTER_CRITICAL_SECTION(rb->mutex, MUTEX_TIMEOUT_MS);
   #else
   ENTER_CRITICAL_SECTION();
   #endif
@@ -441,7 +442,7 @@ uint32_t ring_pop_back_multiple(ring_t *rb, uint32_t count) {
   if (rb == NULL || count == 0 || ring_is_empty(rb)) { return 0; }
 
   #if RING_USE_RTOS_MUTEX
-  ENTER_CRITICAL_SECTION(rb->mutex);
+  ENTER_CRITICAL_SECTION(rb->mutex, MUTEX_TIMEOUT_MS);
   #else
   ENTER_CRITICAL_SECTION();
   #endif
@@ -474,7 +475,7 @@ bool RingBuffer_PopFront(ring_t *rb) {
 
   // Atomic increment of tail and decrement count
   #if RING_USE_RTOS_MUTEX
-  ENTER_CRITICAL_SECTION(rb->mutex);
+  ENTER_CRITICAL_SECTION(rb->mutex, MUTEX_TIMEOUT_MS);
   #else
   ENTER_CRITICAL_SECTION();
   #endif
@@ -493,7 +494,7 @@ uint32_t RingBuffer_PopFrontMultiple(ring_t *rb, uint32_t count) {
   if (rb == NULL || count == 0 || ring_is_empty(rb)) { return 0; }
   
   #if RING_USE_RTOS_MUTEX
-  ENTER_CRITICAL_SECTION(rb->mutex);
+  ENTER_CRITICAL_SECTION(rb->mutex, MUTEX_TIMEOUT_MS);
   #else
   ENTER_CRITICAL_SECTION();
   #endif
@@ -570,13 +571,13 @@ uint32_t ring_dump(ring_t *src_rb, ring_t *dst_rb, bool preserve_source) {
   if (src_rb->element_size != dst_rb->element_size) { return 0; }
 
   #if RING_USE_RTOS_MUTEX
-  ENTER_CRITICAL_SECTION(src_rb->mutex);
+  ENTER_CRITICAL_SECTION(src_rb->mutex, MUTEX_TIMEOUT_MS);
   #else
   ENTER_CRITICAL_SECTION();
   #endif
 
   #if RING_USE_RTOS_MUTEX
-  ENTER_CRITICAL_SECTION(dst_rb->mutex);
+  ENTER_CRITICAL_SECTION(dst_rb->mutex, MUTEX_TIMEOUT_MS);
   #else
   ENTER_CRITICAL_SECTION();
   #endif
@@ -672,12 +673,12 @@ uint32_t ring_dump_count(ring_t *src_rb, ring_t *dst_rb, uint32_t max_count, boo
   if (src_rb->element_size != dst_rb->element_size) { return 0; }
 
   #if RING_USE_RTOS_MUTEX
-  ENTER_CRITICAL_SECTION(src_rb->mutex);
+  ENTER_CRITICAL_SECTION(src_rb->mutex, MUTEX_TIMEOUT_MS);
   #else
   ENTER_CRITICAL_SECTION();
   #endif
   #if RING_USE_RTOS_MUTEX
-  ENTER_CRITICAL_SECTION(dst_rb->mutex);
+  ENTER_CRITICAL_SECTION(dst_rb->mutex, MUTEX_TIMEOUT_MS);
   #else
   ENTER_CRITICAL_SECTION();
   #endif

@@ -1,12 +1,13 @@
 # Embedded C Utilities
 
-A collection of lightweight, modular C utilities for embedded firmware development.
+A collection of lightweight, modular C utilities for embedded firmware development with unified RTOS synchronization support.
 
 ## Features
 
-- **eLog** - Efficient logging system with configurable levels
-- **Ring** - Circular buffer implementation for data streaming
+- **eLog** - Thread-safe logging system with configurable levels and multiple subscribers
+- **Ring** - Per-instance circular buffer with RTOS-aware critical sections
 - **Bit** - Bit manipulation utilities
+- **Mutex Common** - Unified mutex callback interface for consistent RTOS integration
 - Additional utilities for common firmware tasks
 
 ## Getting Started
@@ -21,11 +22,33 @@ cmake ..
 make
 ```
 
+### Unified Mutex Support (NEW!)
+
+All modules now use a unified `mutex_callbacks_t` interface defined in `mutex_common.h`:
+
+```c
+/* Unified mutex callback structure - shared by eLog and Ring */
+typedef struct {
+  void* (*create)(void);                           /* Create mutex */
+  void (*destroy)(void *mutex);                    /* Destroy mutex */
+  mutex_result_t (*acquire)(void *mutex, uint32_t timeout_ms);  /* Lock with timeout */
+  mutex_result_t (*release)(void *mutex);          /* Unlock */
+} mutex_callbacks_t;
+```
+
+This allows both eLog and Ring to share the same callback implementation!
+
 ### Quick Usage
 
-**Logging with eLog:**
+**Logging with eLog (Thread-Safe):**
 ```c
 #include "eLog.h"
+#include "mutex_common.h"
+
+// Register ThreadX mutex callbacks
+extern const mutex_callbacks_t mutex_callbacks;
+elog_register_mutex_callbacks(&mutex_callbacks);
+elog_update_RTOS_ready(true);
 
 int main(void) {
     LOG_INIT_WITH_CONSOLE();
@@ -38,13 +61,26 @@ int main(void) {
 }
 ```
 
-See [eLog documentation](docs/ELOG.md) for advanced features like module-based logging, multiple log levels, subscribers, and thread safety.
-
-**Ring Buffer:**
+**Ring Buffer (Per-Instance Mutex):**
 ```c
 #include "ring.h"
+#include "mutex_common.h"
 
-// Create and use circular buffer for data streaming
+// Register same callbacks for ring buffer
+extern const mutex_callbacks_t mutex_callbacks;
+ring_register_cs_callbacks(&mutex_callbacks);
+
+int main(void) {
+    // Create ring buffers - each gets its own mutex
+    ring_t uart_rx_ring;
+    ring_init_dynamic(&uart_rx_ring, 256, sizeof(uint8_t));
+    
+    // Use ring buffer - synchronization is automatic
+    uint8_t byte = 0xAB;
+    ring_write(&uart_rx_ring, &byte);
+    
+    return 0;
+}
 ```
 
 **Bit Operations:**

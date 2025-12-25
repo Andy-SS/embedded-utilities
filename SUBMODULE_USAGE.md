@@ -5,21 +5,21 @@
 EmbeddedUtilities contains:
 ```
 EmbeddedUtilities/
-├── CMakeLists.txt          # Main build configuration
+├── CMakeLists.txt              # Main build configuration
+├── mutex_common.h              # Unified mutex callback interface (NEW!)
 ├── eLog/
 │   ├── CMakeLists.txt
-│   ├── eLog.c              # Logging implementation
-│   └── eLog.h              # Logging header
+│   ├── eLog.c                  # Logging implementation
+│   └── eLog.h                  # Logging header
 ├── ring/
 │   ├── CMakeLists.txt
-│   ├── ring.c              # Ring buffer implementation
-│   └── ring.h              # Ring buffer header
+│   ├── ring.c                  # Ring buffer implementation
+│   └── ring.h                  # Ring buffer header
 ├── bit/
 │   ├── CMakeLists.txt
-│   └── bit_utils.h         # Bit utilities header (header-only)
+│   └── bit_utils.h             # Bit utilities header (header-only)
 ├── docs/
 ├── examples/
-├── tests/
 └── README.md
 ```
 
@@ -78,21 +78,38 @@ target_link_libraries(firmware PRIVATE
 
 ## Example Usage in Your Code
 
-### eLog - Enhanced Logging with Mutex Callbacks
+### Unified Mutex Callbacks (NEW!)
+
+Both eLog and Ring now use the same `mutex_callbacks_t` interface from `mutex_common.h`:
+
+```c
+#include "mutex_common.h"
+
+/* Example implementation for ThreadX */
+mutex_callbacks_t threadx_callbacks = {
+  .create = threadx_mutex_create,
+  .destroy = threadx_mutex_destroy,
+  .acquire = threadx_mutex_acquire,  /* Supports timeout_ms parameter */
+  .release = threadx_mutex_release
+};
+```
+
+### eLog - Enhanced Logging with Unified Mutex
 
 ```c
 #include "eLog.h"
-#include "eLog_mutex_threadx.h"
+#include "mutex_common.h"
+
+/* ThreadX mutex implementation */
+extern const mutex_callbacks_t threadx_callbacks;
 
 int main(void) {
-    // Register mutex callbacks (ThreadX example)
-    elog_register_mutex_callbacks(&threadx_mutex_callbacks);
+    // Register mutex callbacks (both eLog and Ring use same callbacks!)
+    elog_register_mutex_callbacks(&threadx_callbacks);
+    elog_update_RTOS_ready(true);
     
     // Initialize logging
-    elog_init();
-    
-    // Subscribe console output
-    elog_subscribe(elog_console_subscriber, ELOG_DEFAULT_THRESHOLD);
+    LOG_INIT_WITH_CONSOLE();
     
     // Log messages at different levels
     ELOG_INFO(ELOG_MD_MAIN, "Application started");
@@ -103,17 +120,20 @@ int main(void) {
 }
 ```
 
-### Ring Buffer - Per-Instance Critical Sections
+### Ring Buffer - Per-Instance Synchronization with Unified Mutex
 
 ```c
 #include "ring.h"
-#include "ring_critical_section_threadx.h"
+#include "mutex_common.h"
+
+/* ThreadX mutex implementation - same as eLog! */
+extern const mutex_callbacks_t threadx_callbacks;
 
 int main(void) {
-    // Register critical section callbacks (ThreadX example)
-    ring_register_cs_callbacks(&threadx_cs_callbacks);
+    // Register critical section callbacks (same interface!)
+    ring_register_cs_callbacks(&threadx_callbacks);
     
-    // Create ring buffers - each gets its own mutex
+    // Create ring buffers - each gets its own mutex automatically
     ring_t uart_rx_ring;
     ring_t sensor_data_ring;
     
@@ -135,29 +155,59 @@ int main(void) {
 }
 ```
 
-### ESP32 Application Example
+### Bare Metal Example (No RTOS)
 
 ```c
 #include "eLog.h"
-#include "eLog_mutex_freertos.h"
 #include "ring.h"
-#include "ring_critical_section_esp32.h"
 
-void app_main(void) {
-    // Register eLog mutex callbacks (FreeRTOS)
-    elog_register_mutex_callbacks(&freertos_mutex_callbacks);
-    elog_init();
-    elog_subscribe(elog_console_subscriber, ELOG_DEFAULT_THRESHOLD);
+int main(void) {
+    // Skip mutex registration for bare metal
+    // or pass NULL if function allows
+    LOG_INIT_WITH_CONSOLE();
     
-    // Register ring buffer callbacks (ESP32 spinlocks)
-    ring_register_cs_callbacks(&esp32_cs_callbacks);
+    // Both modules work without thread safety
+    ELOG_INFO(ELOG_MD_MAIN, "Single-threaded application");
     
-    ring_t ble_rx_ring;
-    ring_init_dynamic(&ble_rx_ring, 512, sizeof(uint8_t));
+    ring_t data_ring;
+    ring_init_dynamic(&data_ring, 256, sizeof(uint8_t));
     
-    ELOG_INFO(ELOG_MD_MAIN, "ESP32 app initialized");
+    return 0;
+}
+```
+
+### Multi-Module Integration Example
+
+```c
+#include "eLog.h"
+#include "ring.h"
+#include "mutex_common.h"
+#include "tx_api.h"  /* ThreadX only */
+
+/* ThreadX mutex callbacks implementation */
+extern const mutex_callbacks_t threadx_callbacks;
+
+void application_init(void) {
+    // Register callbacks once - used by both modules!
+    elog_register_mutex_callbacks(&threadx_callbacks);
+    ring_register_cs_callbacks(&threadx_callbacks);
     
-    ring_destroy(&ble_rx_ring);
+    // Mark eLog ready for RTOS operations
+    elog_update_RTOS_ready(true);
+    
+    // Initialize both modules
+    LOG_INIT_WITH_CONSOLE();
+    
+    // Create ring buffers
+    ring_t uart_buffer;
+    ring_t sensor_buffer;
+    
+    ring_init_dynamic(&uart_buffer, 512, sizeof(uint8_t));
+    ring_init_dynamic(&sensor_buffer, 256, sizeof(uint16_t));
+    
+    ELOG_INFO(ELOG_MD_MAIN, "Both eLog and Ring are thread-safe!");
+    
+    // Both modules now use ThreadX mutexes automatically
 }
 ```
 

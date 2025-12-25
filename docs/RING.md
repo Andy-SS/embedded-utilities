@@ -47,47 +47,100 @@ if (ring_init_dynamic(&ring, 128, sizeof(MyData))) {
 **Pros:** Flexible sizing at runtime
 **Cons:** Requires cleanup with `ring_destroy()`
 
-## Thread-Safe Usage with Per-Instance Mutexes
+## Thread-Safe Usage with Unified Mutex Callbacks (NEW!)
 
-### Setup with Callbacks
+### Unified Callback Interface
 
-The ring buffer uses callback functions for critical sections, allowing each ring buffer to have its own independent mutex. Register the callbacks once during initialization:
+Ring buffer now uses the unified `mutex_callbacks_t` interface from `mutex_common.h`:
 
 ```c
-// Register the critical section callbacks (ThreadX example)
-ring_register_cs_callbacks(&threadx_cs_callbacks);
-
-// Create ring buffers - each will automatically get its own mutex
-ring_t data_ring;
-ring_init_dynamic(&data_ring, 256, sizeof(MyData));
-
-ring_t command_ring;
-ring_init_dynamic(&command_ring, 128, sizeof(MyData));
+/* Same interface used by eLog and Ring */
+typedef struct {
+  void* (*create)(void);                           /* Create mutex */
+  void (*destroy)(void *mutex);                    /* Destroy mutex */
+  mutex_result_t (*acquire)(void *mutex, uint32_t timeout_ms);  /* Lock with timeout */
+  mutex_result_t (*release)(void *mutex);          /* Unlock */
+} mutex_callbacks_t;
 ```
 
-### How It Works
+### Setup with Unified Callbacks
+
+Register the callbacks once during initialization:
+
+```c
+#include "ring.h"
+#include "mutex_common.h"
+
+// ThreadX mutex callbacks (same as eLog!)
+extern const mutex_callbacks_t mutex_callbacks;
+
+void app_init(void) {
+    // Register the unified callbacks (same interface for both eLog and Ring!)
+    ring_register_cs_callbacks(&mutex_callbacks);
+    
+    // Create ring buffers - each will automatically get its own mutex
+    ring_t data_ring;
+    ring_init_dynamic(&data_ring, 256, sizeof(MyData));
+    
+    ring_t command_ring;
+    ring_init_dynamic(&command_ring, 128, sizeof(MyData));
+}
+```
+
+### How Per-Instance Mutexes Work
 
 - **One-time registration**: Call `ring_register_cs_callbacks()` once at app startup
-- **Per-instance mutexes**: Each `ring_init()` or `ring_init_dynamic()` creates a unique mutex for that buffer
+- **Per-instance mutexes**: Each `ring_init()` or `ring_init_dynamic()` calls `create()` to get a unique mutex
 - **Independent synchronization**: Each ring buffer protects its own operations without affecting others
-- **Automatic cleanup**: `ring_destroy()` cleans up the mutex when done
+- **Automatic cleanup**: `ring_destroy()` calls `destroy()` to clean up each mutex
+- **Shared with eLog**: Use the same `mutex_callbacks_t` for both eLog and Ring!
 
 ### Available Platform Callbacks
 
-- **ThreadX**: `threadx_cs_callbacks` - Create via `ring_critical_section_threadx.c`
-- **FreeRTOS**: `freertos_cs_callbacks` - Create via `ring_critical_section_freertos.c`
-- **ESP32**: `esp32_cs_callbacks` - Create via `ring_critical_section_esp32.c`
+- **ThreadX**: Implemented in `rtos.c` - `const mutex_callbacks_t mutex_callbacks`
+- **FreeRTOS**: Create via platform-specific callback implementation
+- **ESP32**: Create via platform-specific callback implementation
 - **Bare Metal**: Pass `NULL` to `ring_register_cs_callbacks()` for non-thread-safe operation
 
 ### Usage Example (Operations Are Automatically Protected)
 
 ```c
-// No need to manually manage mutex - operations are thread-safe
-uint32_t data = 42;
-ring_write(&data_ring, &data);  // Uses data_ring's mutex internally
+#include "ring.h"
+#include "mutex_common.h"
 
-MyData cmd = {...};
-ring_write(&command_ring, &cmd);  // Uses command_ring's mutex independently
+extern const mutex_callbacks_t mutex_callbacks;
+
+void producer_task(void) {
+    ring_t *ring = &data_ring;
+    
+    uint32_t data = 42;
+    // Automatically locked/unlocked by ring buffer
+    ring_write(ring, &data);
+}
+
+void consumer_task(void) {
+    ring_t *ring = &data_ring;
+    
+    uint32_t data;
+    // Automatically locked/unlocked by ring buffer
+    if (ring_read(ring, &data)) {
+        printf("Received: %u\n", data);
+    }
+}
+```
+
+### Multi-Module Integration
+
+Both eLog and Ring use the same callbacks, so you only need to register once:
+
+```c
+void rtos_init(void) {
+    // Register ONCE - both modules use it!
+    elog_register_mutex_callbacks(&mutex_callbacks);
+    ring_register_cs_callbacks(&mutex_callbacks);
+    
+    elog_update_RTOS_ready(true);
+}
 ```
 
 ## Basic Operations

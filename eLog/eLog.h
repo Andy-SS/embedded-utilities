@@ -122,31 +122,12 @@ static inline const char *debug_get_filename(const char *fullpath) {
 /* Thread Safety Configuration */
 /* ========================================================================== */
 #if (ELOG_THREAD_SAFE == 1)
-/* Mutex result codes */
-typedef enum {
-  ELOG_MUTEX_OK = 0,
-  ELOG_MUTEX_TIMEOUT,
-  ELOG_MUTEX_ERROR,
-  ELOG_MUTEX_NOT_SUPPORTED
-} elog_mutex_result_t;
-
-/* Mutex Callback Function Prototype */
-typedef elog_mutex_result_t (*elog_mutex_create_fn)(void);
-typedef elog_mutex_result_t (*elog_mutex_take_fn)(uint32_t timeout_ms);
-typedef elog_mutex_result_t (*elog_mutex_give_fn)(void);
-typedef elog_mutex_result_t (*elog_mutex_delete_fn)(void);
-
-/* Mutex callbacks structure */
-typedef struct {
-  elog_mutex_create_fn create;
-  elog_mutex_take_fn take;
-  elog_mutex_give_fn give;
-  elog_mutex_delete_fn delete;
-} elog_mutex_callbacks_t;
-
-/* Mutex type definition */
-typedef void* elog_mutex_t;
-
+#include "mutex_common.h"
+/**
+ * @brief Register mutex callback functions with eLog
+ * @param callbacks: Pointer to callback structure (NULL to disable thread safety)
+ */
+bool elog_register_mutex_callbacks(const mutex_callbacks_t *callbacks);
 #endif /* ELOG_THREAD_SAFE */
 
 /* ========================================================================== */
@@ -351,15 +332,6 @@ void elog_message(elog_module_t module, elog_level_t level, const char *fmt, ...
  * @param ...: Format arguments
  */
 void elog_message_with_location(elog_module_t module, elog_level_t level, const char *file, const char *func, int line, const char *fmt, ...);
-
-#if (ELOG_THREAD_SAFE == 1)
-/**
- * @brief Register mutex callback functions with eLog
- * @param callbacks: Pointer to callback structure (NULL to disable thread safety)
- * @return ELOG_ERR_NONE on success
- */
-elog_err_t elog_register_mutex_callbacks(const elog_mutex_callbacks_t *callbacks);
-#endif
 
 /* ========================================================================== */
 #define LOG_MESSAGE(module, level, ...) elog_message(module, level, __VA_ARGS__)

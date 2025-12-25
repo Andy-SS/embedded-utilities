@@ -30,34 +30,14 @@ typedef struct {
 } ring_t;
 
 #if RING_USE_RTOS_MUTEX
-/* Critical section operation result codes */
-typedef enum {
-  RING_CS_OK = 0,
-  RING_CS_ERROR,
-  RING_CS_TIMEOUT
-} ring_cs_result_t;
-
-/* Critical section callback function prototypes - per mutex instance */
-/* Each ring buffer has its own mutex handle passed as parameter */
-typedef ring_cs_result_t (*ring_cs_enter_fn)(void *mutex);
-typedef ring_cs_result_t (*ring_cs_exit_fn)(void *mutex);
-typedef void* (*ring_cs_create_fn)(void);  /* Create and return new mutex */
-typedef void (*ring_cs_destroy_fn)(void *mutex);  /* Destroy mutex */
-
-/* Critical section callbacks structure */
-typedef struct {
-  ring_cs_create_fn create;    /* Create a new mutex for a ring buffer */
-  ring_cs_destroy_fn destroy;  /* Destroy a ring buffer's mutex */
-  ring_cs_enter_fn enter;      /* Lock a specific mutex */
-  ring_cs_exit_fn exit;        /* Unlock a specific mutex */
-} ring_cs_callbacks_t;
+#include "mutex_common.h"
 
 /**
  * @brief Register critical section callbacks with ring buffer
  * @param callbacks: Pointer to callback structure (NULL for no synchronization)
  * @return true on success
  */
-bool ring_register_cs_callbacks(const ring_cs_callbacks_t *callbacks);
+bool ring_register_cs_callbacks(const mutex_callbacks_t *callbacks);
 #endif /* RING_USE_RTOS_MUTEX */
 
 /**

@@ -214,20 +214,117 @@ printALWAYS(ELOG_MD_MAIN, "Always logged");
 
 ## 🔌 RTOS Threading Configuration
 
+### Unified Mutex Callbacks (NEW!)
+
+eLog now uses the unified `mutex_callbacks_t` interface from `mutex_common.h`:
+
+```c
+/* Unified mutex callback structure - same for eLog and Ring */
+typedef struct {
+  void* (*create)(void);                           /* Create mutex */
+  void (*destroy)(void *mutex);                    /* Destroy mutex */
+  mutex_result_t (*acquire)(void *mutex, uint32_t timeout_ms);  /* Lock with timeout */
+  mutex_result_t (*release)(void *mutex);          /* Unlock */
+} mutex_callbacks_t;
+```
+
 ### Thread Safety Options
 ```c
 /* Enable/disable thread safety */
 #define ELOG_THREAD_SAFE 1              /* 1=enabled, 0=disabled */
 
 /* RTOS selection */
-#define ELOG_RTOS_TYPE ELOG_RTOS_FREERTOS
-// Options: ELOG_RTOS_FREERTOS, ELOG_RTOS_THREADX, ELOG_RTOS_CMSIS, ELOG_RTOS_NONE
+#define ELOG_RTOS_TYPE ELOG_RTOS_THREADX
+// Options: ELOG_RTOS_THREADX, ELOG_RTOS_FREERTOS, ELOG_RTOS_CMSIS, ELOG_RTOS_NONE
 
 /* Mutex timeout configuration */
-#define ELOG_MUTEX_TIMEOUT_MS 500       /* Timeout in milliseconds - increased for robustness */
+#define ELOG_MUTEX_TIMEOUT_MS 500       /* Timeout in milliseconds */
+```
+
+### ThreadX Integration with Unified Mutex
+
+The ThreadX mutex implementation is provided in `rtos.c`:
+
+```c
+/* ThreadX mutex callbacks (implementation example) */
+void* threadx_mutex_create(void) {
+  TX_MUTEX *mutex = (TX_MUTEX *)malloc(sizeof(TX_MUTEX));
+  if (mutex == NULL) return NULL;
+  
+  UINT status = tx_mutex_create(mutex, "eLog Mutex", TX_NO_INHERIT);
+  return (status == TX_SUCCESS) ? (void *)mutex : NULL;
+}
+
+mutex_result_t threadx_mutex_acquire(void *mutex, uint32_t timeout_ms) {
+  if (mutex == NULL) return MUTEX_ERROR;
+  
+  TX_MUTEX *tx_mutex = (TX_MUTEX *)mutex;
+  UINT timeout_ticks = (timeout_ms == UINT32_MAX) ? TX_WAIT_FOREVER : TX_MS_TO_TICKS(timeout_ms);
+  UINT status = tx_mutex_get(tx_mutex, timeout_ticks);
+  
+  if (status == TX_SUCCESS) return MUTEX_OK;
+  if (status == TX_NOT_AVAILABLE) return MUTEX_TIMEOUT;
+  return MUTEX_ERROR;
+}
+
+mutex_result_t threadx_mutex_release(void *mutex) {
+  if (mutex == NULL) return MUTEX_ERROR;
+  
+  TX_MUTEX *tx_mutex = (TX_MUTEX *)mutex;
+  UINT status = tx_mutex_put(tx_mutex);
+  return (status == TX_SUCCESS) ? MUTEX_OK : MUTEX_ERROR;
+}
+
+mutex_result_t threadx_mutex_destroy(void *mutex) {
+  if (mutex == NULL) return MUTEX_ERROR;
+  
+  TX_MUTEX *tx_mutex = (TX_MUTEX *)mutex;
+  UINT status = tx_mutex_delete(tx_mutex);
+  free(tx_mutex);
+  return (status == TX_SUCCESS) ? MUTEX_OK : MUTEX_ERROR;
+}
+
+/* Unified callbacks structure */
+const mutex_callbacks_t mutex_callbacks = {
+  .create = threadx_mutex_create,
+  .destroy = threadx_mutex_destroy,
+  .acquire = threadx_mutex_acquire,
+  .release = threadx_mutex_release
+};
 ```
 
 ### RTOS Integration Examples
+
+#### ThreadX Setup (Recommended)
+
+In `tx_application_define()`:
+
+```c
+void tx_application_define(VOID *first_unused_memory) {
+    // ... other initialization ...
+    
+    #if (ELOG_THREAD_SAFE == 1)
+    // Register unified mutex callbacks with eLog
+    elog_register_mutex_callbacks(&mutex_callbacks);
+    elog_update_RTOS_ready(true);
+    #endif
+    
+    // Now eLog is thread-safe for all tasks
+}
+```
+
+In your task code:
+
+```c
+void task_entry(ULONG thread_input) {
+    ELOG_INFO(ELOG_MD_MAIN, "Task started");
+    
+    for(;;) {
+        ELOG_DEBUG(ELOG_MD_MAIN, "Task running - mutex protected");
+        tx_thread_sleep(TX_MS_TO_TICKS(1000));
+    }
+}
+```
 
 #### FreeRTOS Setup
 ```c
@@ -236,43 +333,25 @@ printALWAYS(ELOG_MD_MAIN, "Always logged");
 
 #include "FreeRTOS.h"
 #include "eLog.h"
+#include "mutex_common.h"
+
+/* FreeRTOS mutex implementation */
+extern const mutex_callbacks_t freertos_callbacks;
+
+void app_init(void) {
+    // Register unified mutex callbacks
+    elog_register_mutex_callbacks(&freertos_callbacks);
+    elog_update_RTOS_ready(true);
+    
+    LOG_INIT_WITH_CONSOLE();
+}
 
 void task1(void *pvParameters) {
-    LOG_INIT_WITH_THREAD_INFO();  /* Initialize with task name in logs */
-    
     for(;;) {
-        ELOG_INFO(ELOG_MD_TASK_A, "Task 1 is running");
+        ELOG_INFO(ELOG_MD_MAIN, "FreeRTOS task running");
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
-
-void task2(void *pvParameters) {
-    for(;;) {
-        ELOG_DEBUG(ELOG_MD_TASK_B, "Task 2 processing data");
-        vTaskDelay(pdMS_TO_TICKS(500));
-    }
-}
-```
-
-#### ThreadX Setup (Detailed Implementation)
-
-For detailed step-by-step integration, see the "Quick Start - ThreadX Integration" section above.
-
-**Summary:**
-- Call `LOG_INIT_WITH_CONSOLE_AUTO()` early in `main()` before RTOS starts
-- In `tx_application_define()`, at the very end:
-  1. Call `elog_register_mutex_callbacks(&threadx_mutex_callbacks)`
-  2. Call `elog_update_RTOS_ready(true)`
-- Use logging macros anywhere - thread safety is automatic after RTOS startup
-
-**Thread-Safe Logging:**
-```c
-// Before RTOS: logging works without mutex
-printLOG(ELOG_MD_DEFAULT, "Early init");
-
-// After RTOS: logging is protected by mutex automatically
-ELOG_INFO(ELOG_MD_MAIN, "Thread-safe: mutex active");
-ELOG_ERROR(ELOG_MD_MAIN, "Safe to call from any thread");
 ```
 
 ### Quick Start - ThreadX Integration
@@ -310,29 +389,29 @@ int main(void) {
 #if (ELOG_THREAD_SAFE == 1)
 static TX_MUTEX elog_mutex;
 
-elog_mutex_result_t threadx_mutex_create(void) {
+mutex_result_t threadx_mutex_create(void) {
   UINT status = tx_mutex_create(&elog_mutex, "eLog_Mutex", TX_NO_INHERIT);
   return (status == TX_SUCCESS) ? ELOG_MUTEX_OK : ELOG_MUTEX_ERROR;
 }
 
-elog_mutex_result_t threadx_mutex_take(uint32_t timeout_ms) {
+mutex_result_t threadx_mutex_take(uint32_t timeout_ms) {
   UINT status = tx_mutex_get(&elog_mutex, timeout_ms * TX_TIMER_TICKS_PER_SECOND / 1000);
   if (status == TX_SUCCESS) return ELOG_MUTEX_OK;
   else if (status == TX_NOT_AVAILABLE) return ELOG_MUTEX_TIMEOUT;
   else return ELOG_MUTEX_ERROR;
 }
 
-elog_mutex_result_t threadx_mutex_give(void) {
+mutex_result_t threadx_mutex_give(void) {
   UINT status = tx_mutex_put(&elog_mutex);
   return (status == TX_SUCCESS) ? ELOG_MUTEX_OK : ELOG_MUTEX_ERROR;
 }
 
-elog_mutex_result_t threadx_mutex_delete(void) {
+mutex_result_t threadx_mutex_delete(void) {
   UINT status = tx_mutex_delete(&elog_mutex);
   return (status == TX_SUCCESS) ? ELOG_MUTEX_OK : ELOG_MUTEX_ERROR;
 }
 
-const elog_mutex_callbacks_t threadx_mutex_callbacks = {
+const mutex_callbacks_t threadx_mutex_callbacks = {
   .create = threadx_mutex_create,
   .take = threadx_mutex_take,
   .give = threadx_mutex_give,
@@ -504,7 +583,7 @@ elog_err_t elog_subscribe(log_subscriber_t fn, elog_level_t threshold);
 elog_err_t elog_unsubscribe(log_subscriber_t fn);
 
 /* RTOS registration and management */
-elog_err_t elog_register_mutex_callbacks(const elog_mutex_callbacks_t *callbacks);  /* Register RTOS mutex callbacks */
+elog_err_t elog_register_mutex_callbacks(const mutex_callbacks_t *callbacks);  /* Register RTOS mutex callbacks */
 void elog_update_RTOS_ready(bool ready);                                            /* Signal RTOS is ready for thread safety */
 
 /* Mutex callback registration structure */
@@ -513,7 +592,7 @@ typedef struct {
   elog_mutex_take_fn take;       /* Acquire mutex callback */
   elog_mutex_give_fn give;       /* Release mutex callback */
   elog_mutex_delete_fn delete;   /* Delete mutex callback */
-} elog_mutex_callbacks_t;
+} mutex_callbacks_t;
 
 /* Mutex timeout configuration */
 #define ELOG_MUTEX_TIMEOUT_MS 100      /* Timeout in milliseconds for mutex operations */

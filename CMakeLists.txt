@@ -18,3 +18,7 @@ target_include_directories(EmbeddedUtilities INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/ring>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/bit>
 )
+
+# Make mutex_common.h available to all modules
+target_include_directories(eLog PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(ring PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
