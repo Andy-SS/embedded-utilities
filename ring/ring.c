@@ -185,17 +185,15 @@ bool ring_is_full(const ring_t *rb) { return rb->count == rb->size; }
 
 // Write an element to the ring buffer
 bool ring_write(ring_t *rb, const void *data) {
-  if (ring_is_full(rb)) {
-    return false; // Buffer full, write fails
-  }
-  // Calculate the offset and copy the data
-  void *dest = (uint8_t *)rb->buffer + (rb->head * rb->element_size);
-  memcpy(dest, data, rb->element_size);
+  if (ring_is_full(rb)) { return false; }
   #if RING_USE_RTOS_MUTEX
   ENTER_CRITICAL_SECTION(rb->mutex);
   #else
   ENTER_CRITICAL_SECTION();
   #endif
+  // Calculate the offset and copy the data
+  void *dest = (uint8_t *)rb->buffer + (rb->head * rb->element_size);
+  memcpy(dest, data, rb->element_size);
   rb->head = (rb->head + 1) % rb->size; // Increment head with wrap-around
   rb->count++;                          // Increment count
   #if RING_USE_RTOS_MUTEX
@@ -208,21 +206,19 @@ bool ring_write(ring_t *rb, const void *data) {
 
 // Write an element to the ring buffer (overwrites oldest data if full)
 bool ring_push_front(ring_t *rb, const void *data) {
-  if (rb == NULL) {
-    return false; // Not a valid ring buffer, write fails
-  }
-  
-  bool was_full = ring_is_full(rb);
-  
-  // Ring: overwrite oldest data when full
-  void *dest = (uint8_t *)rb->buffer + (rb->head * rb->element_size);
-  memcpy(dest, data, rb->element_size);
+  if (rb == NULL) { return false; }
   
   #if RING_USE_RTOS_MUTEX
   ENTER_CRITICAL_SECTION(rb->mutex);
   #else
   ENTER_CRITICAL_SECTION();
   #endif
+  bool was_full = ring_is_full(rb);
+  
+  // Ring: overwrite oldest data when full
+  void *dest = (uint8_t *)rb->buffer + (rb->head * rb->element_size);
+  memcpy(dest, data, rb->element_size);
+  
   rb->head = (rb->head + 1) % rb->size;
   
   if (was_full) {
@@ -245,6 +241,11 @@ bool ring_push_front(ring_t *rb, const void *data) {
 uint32_t ring_push_back(ring_t *rb, const void *data, uint32_t count) {
   if (rb == NULL || data == NULL || count == 0) { return 0; }
 
+  #if RING_USE_RTOS_MUTEX
+  ENTER_CRITICAL_SECTION(rb->mutex);
+  #else
+  ENTER_CRITICAL_SECTION();
+  #endif
   uint32_t head = rb->head;
   uint32_t tail = rb->tail;
   uint32_t current_count = rb->count;
@@ -266,11 +267,6 @@ uint32_t ring_push_back(ring_t *rb, const void *data, uint32_t count) {
     }
   }
   
-  #if RING_USE_RTOS_MUTEX
-  ENTER_CRITICAL_SECTION(rb->mutex);
-  #else
-  ENTER_CRITICAL_SECTION();
-  #endif
   rb->head = head;
   rb->tail = tail;
   rb->count = current_count;
@@ -340,6 +336,12 @@ uint32_t ring_get_free(const ring_t *rb) {
 uint32_t ring_write_multiple(ring_t *rb, const void *data, uint32_t count) {
   if (rb == NULL || data == NULL || count == 0) { return 0; }
 
+  #if RING_USE_RTOS_MUTEX
+  ENTER_CRITICAL_SECTION(rb->mutex);
+  #else
+  ENTER_CRITICAL_SECTION();
+  #endif
+
   uint32_t free_slots = ring_get_free(rb);
   uint32_t elements_to_write = (count > free_slots) ? free_slots : count;
 
@@ -360,11 +362,6 @@ uint32_t ring_write_multiple(ring_t *rb, const void *data, uint32_t count) {
   }
 
   // Atomic update of head and count
-  #if RING_USE_RTOS_MUTEX
-  ENTER_CRITICAL_SECTION(rb->mutex);
-  #else
-  ENTER_CRITICAL_SECTION();
-  #endif
   rb->head = (head + elements_to_write) % rb->size;
   rb->count += elements_to_write;
   #if RING_USE_RTOS_MUTEX
@@ -379,6 +376,12 @@ uint32_t ring_write_multiple(ring_t *rb, const void *data, uint32_t count) {
 // Read multiple elements from the ring buffer (DMA-friendly)
 uint32_t ring_read_multiple(ring_t *rb, void *data, uint32_t count) {
   if (rb == NULL || data == NULL || count == 0) { return 0; }
+
+  #if RING_USE_RTOS_MUTEX
+  ENTER_CRITICAL_SECTION(rb->mutex);
+  #else
+  ENTER_CRITICAL_SECTION();
+  #endif
 
   uint32_t available = ring_available(rb);
   uint32_t elements_to_read = (count > available) ? available : count;
@@ -400,11 +403,6 @@ uint32_t ring_read_multiple(ring_t *rb, void *data, uint32_t count) {
   }
 
   // Atomic update of tail and count
-  #if RING_USE_RTOS_MUTEX
-  ENTER_CRITICAL_SECTION(rb->mutex);
-  #else
-  ENTER_CRITICAL_SECTION();
-  #endif
   rb->tail = (tail + elements_to_read) % rb->size;
   rb->count -= elements_to_read;
   #if RING_USE_RTOS_MUTEX
@@ -440,26 +438,26 @@ bool ring_pop_back(ring_t *rb) {
 
 // Remove multiple elements from the back of the ring buffer
 uint32_t ring_pop_back_multiple(ring_t *rb, uint32_t count) {
-  if (rb == NULL || count == 0 || ring_is_empty(rb)) {
-    return 0; // Invalid parameters or empty buffer
-  }
+  if (rb == NULL || count == 0 || ring_is_empty(rb)) { return 0; }
+
+  #if RING_USE_RTOS_MUTEX
+  ENTER_CRITICAL_SECTION(rb->mutex);
+  #else
+  ENTER_CRITICAL_SECTION();
+  #endif
 
   // Limit count to available elements
   uint32_t available = ring_available(rb);
   uint32_t elements_to_remove = (count > available) ? available : count;
 
   // Atomic decrement of head and count
-  #if RING_USE_RTOS_MUTEX
-  ENTER_CRITICAL_SECTION(rb->mutex);
-  #else
-  ENTER_CRITICAL_SECTION();
-  #endif
   if (rb->head >= elements_to_remove) {
     rb->head -= elements_to_remove;
   } else {
     rb->head = rb->size - (elements_to_remove - rb->head);
   }
   rb->count -= elements_to_remove;
+
   #if RING_USE_RTOS_MUTEX
   EXIT_CRITICAL_SECTION(rb->mutex);
   #else
@@ -492,20 +490,18 @@ bool RingBuffer_PopFront(ring_t *rb) {
 
 // Remove multiple elements from the front of the ring buffer (oldest elements)
 uint32_t RingBuffer_PopFrontMultiple(ring_t *rb, uint32_t count) {
-  if (rb == NULL || count == 0 || ring_is_empty(rb)) {
-    return 0; // Invalid parameters or empty buffer
-  }
-
-  // Limit count to available elements
-  uint32_t available = ring_available(rb);
-  uint32_t elements_to_remove = (count > available) ? available : count;
-
-  // Atomic increment of tail and decrement count
+  if (rb == NULL || count == 0 || ring_is_empty(rb)) { return 0; }
+  
   #if RING_USE_RTOS_MUTEX
   ENTER_CRITICAL_SECTION(rb->mutex);
   #else
   ENTER_CRITICAL_SECTION();
   #endif
+  // Limit count to available elements
+  uint32_t available = ring_available(rb);
+  uint32_t elements_to_remove = (count > available) ? available : count;
+
+  // Atomic increment of tail and decrement count
   rb->tail = (rb->tail + elements_to_remove) % rb->size;
   rb->count -= elements_to_remove;
   #if RING_USE_RTOS_MUTEX
@@ -568,28 +564,42 @@ uint32_t ring_peek_front_multiple(const ring_t *rb, void *data, uint32_t count) 
 
 // Dump all elements from source ring buffer to destination ring buffer (direct buffer copy)
 uint32_t ring_dump(ring_t *src_rb, ring_t *dst_rb, bool preserve_source) {
-  if (src_rb == NULL || dst_rb == NULL) {
-    return 0;
-  }
-  
+  if (src_rb == NULL || dst_rb == NULL) { return 0; }
+
   // Check element size compatibility
-  if (src_rb->element_size != dst_rb->element_size) {
-    return 0;
-  }
-  
+  if (src_rb->element_size != dst_rb->element_size) { return 0; }
+
+  #if RING_USE_RTOS_MUTEX
+  ENTER_CRITICAL_SECTION(src_rb->mutex);
+  #else
+  ENTER_CRITICAL_SECTION();
+  #endif
+
+  #if RING_USE_RTOS_MUTEX
+  ENTER_CRITICAL_SECTION(dst_rb->mutex);
+  #else
+  ENTER_CRITICAL_SECTION();
+  #endif
+
   // Get available elements in source and free space in destination
   uint32_t src_available = ring_available(src_rb);
   uint32_t dst_free = ring_get_free(dst_rb);
-  
-  if (src_available == 0) {
-    return 0;  // Nothing to copy
-  }
-  
   // Determine how many elements we can actually copy
   uint32_t elements_to_copy = (src_available < dst_free) ? src_available : dst_free;
   
-  if (elements_to_copy == 0) {
-    return 0;  // Destination is full
+  // Source has no data to copy or destination is full
+  if ((src_available == 0) ||(elements_to_copy == 0)) {
+    #if RING_USE_RTOS_MUTEX
+    EXIT_CRITICAL_SECTION(src_rb->mutex);
+    #else
+    EXIT_CRITICAL_SECTION();
+    #endif
+    #if RING_USE_RTOS_MUTEX
+    EXIT_CRITICAL_SECTION(dst_rb->mutex);
+    #else
+    EXIT_CRITICAL_SECTION();
+    #endif
+    return 0;  // Nothing to copy
   }
   
   uint32_t copied_count = 0;
@@ -622,12 +632,6 @@ uint32_t ring_dump(ring_t *src_rb, ring_t *dst_rb, bool preserve_source) {
   }
   
   // Update source ring buffer states atomically
-  #if RING_USE_RTOS_MUTEX
-  ENTER_CRITICAL_SECTION(src_rb->mutex);
-  #else
-  ENTER_CRITICAL_SECTION();
-  #endif
-  
   if (!preserve_source) {
     // Consume source data by updating tail and count
     src_rb->tail = src_tail;
@@ -637,18 +641,8 @@ uint32_t ring_dump(ring_t *src_rb, ring_t *dst_rb, bool preserve_source) {
       src_rb->count = 0;  // Safety check to prevent underflow
     }
   }
-  #if RING_USE_RTOS_MUTEX
-  EXIT_CRITICAL_SECTION(src_rb->mutex);
-  #else
-  EXIT_CRITICAL_SECTION();
-  #endif
   
   // Always update destination head and count with overflow protection
-  #if RING_USE_RTOS_MUTEX
-  ENTER_CRITICAL_SECTION(dst_rb->mutex);
-  #else
-  ENTER_CRITICAL_SECTION();
-  #endif
   dst_rb->head = dst_head;
   uint32_t new_count = dst_rb->count + copied_count;
   if (new_count <= dst_rb->size) {
@@ -656,6 +650,11 @@ uint32_t ring_dump(ring_t *src_rb, ring_t *dst_rb, bool preserve_source) {
   } else {
     dst_rb->count = dst_rb->size;  // Clamp to maximum size
   }
+  #if RING_USE_RTOS_MUTEX
+  EXIT_CRITICAL_SECTION(src_rb->mutex);
+  #else
+  EXIT_CRITICAL_SECTION();
+  #endif
   #if RING_USE_RTOS_MUTEX
   EXIT_CRITICAL_SECTION(dst_rb->mutex);
   #else
@@ -667,22 +666,26 @@ uint32_t ring_dump(ring_t *src_rb, ring_t *dst_rb, bool preserve_source) {
 
 // Dump limited number of elements from source ring buffer to destination ring buffer (direct buffer copy)
 uint32_t ring_dump_count(ring_t *src_rb, ring_t *dst_rb, uint32_t max_count, bool preserve_source) {
-  if (src_rb == NULL || dst_rb == NULL || max_count == 0) {
-    return 0;
-  }
-  
+  if (src_rb == NULL || dst_rb == NULL || max_count == 0) { return 0; }
+
   // Check element size compatibility
-  if (src_rb->element_size != dst_rb->element_size) {
-    return 0;
-  }
+  if (src_rb->element_size != dst_rb->element_size) { return 0; }
+
+  #if RING_USE_RTOS_MUTEX
+  ENTER_CRITICAL_SECTION(src_rb->mutex);
+  #else
+  ENTER_CRITICAL_SECTION();
+  #endif
+  #if RING_USE_RTOS_MUTEX
+  ENTER_CRITICAL_SECTION(dst_rb->mutex);
+  #else
+  ENTER_CRITICAL_SECTION();
+  #endif
   
+
   // Get available elements in source and free space in destination
   uint32_t src_available = ring_available(src_rb);
   uint32_t dst_free = ring_get_free(dst_rb);
-  
-  if (src_available == 0) {
-    return 0;  // Nothing to copy
-  }
   
   // Determine how many elements we can actually copy (limited by max_count)
   uint32_t elements_to_copy = src_available;
@@ -693,7 +696,18 @@ uint32_t ring_dump_count(ring_t *src_rb, ring_t *dst_rb, uint32_t max_count, boo
     elements_to_copy = dst_free;
   }
   
-  if (elements_to_copy == 0) {
+  // Source has no data to copy or destination is full
+  if ((elements_to_copy == 0) || (src_available == 0)) {
+    #if RING_USE_RTOS_MUTEX
+    EXIT_CRITICAL_SECTION(src_rb->mutex);
+    #else
+    EXIT_CRITICAL_SECTION();
+    #endif
+    #if RING_USE_RTOS_MUTEX
+    EXIT_CRITICAL_SECTION(dst_rb->mutex);
+    #else
+    EXIT_CRITICAL_SECTION();
+    #endif
     return 0;  // Nothing to copy or destination is full
   }
   
@@ -727,12 +741,6 @@ uint32_t ring_dump_count(ring_t *src_rb, ring_t *dst_rb, uint32_t max_count, boo
   }
   
   // Update source ring buffer states atomically
-  #if RING_USE_RTOS_MUTEX
-  ENTER_CRITICAL_SECTION(src_rb->mutex);
-  #else
-  ENTER_CRITICAL_SECTION();
-  #endif
-  
   if (!preserve_source) {
     // Consume source data by updating tail and count
     src_rb->tail = src_tail;
@@ -742,18 +750,8 @@ uint32_t ring_dump_count(ring_t *src_rb, ring_t *dst_rb, uint32_t max_count, boo
       src_rb->count = 0;  // Safety check to prevent underflow
     }
   }
-  #if RING_USE_RTOS_MUTEX
-  EXIT_CRITICAL_SECTION(src_rb->mutex);
-  #else
-  EXIT_CRITICAL_SECTION();
-  #endif
   
   // Always update destination head and count with overflow protection
-  #if RING_USE_RTOS_MUTEX
-  ENTER_CRITICAL_SECTION(dst_rb->mutex);
-  #else
-  ENTER_CRITICAL_SECTION();
-  #endif
   dst_rb->head = dst_head;
   uint32_t new_count = dst_rb->count + copied_count;
   if (new_count <= dst_rb->size) {
@@ -761,6 +759,11 @@ uint32_t ring_dump_count(ring_t *src_rb, ring_t *dst_rb, uint32_t max_count, boo
   } else {
     dst_rb->count = dst_rb->size;  // Clamp to maximum size
   }
+  #if RING_USE_RTOS_MUTEX
+  EXIT_CRITICAL_SECTION(src_rb->mutex);
+  #else
+  EXIT_CRITICAL_SECTION();
+  #endif
   #if RING_USE_RTOS_MUTEX
   EXIT_CRITICAL_SECTION(dst_rb->mutex);
   #else
