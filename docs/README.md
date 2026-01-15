@@ -7,7 +7,8 @@ A collection of lightweight, modular C utilities for embedded firmware developme
 - **eLog** - Thread-safe logging system with configurable levels and multiple subscribers
 - **Ring** - Per-instance circular buffer with RTOS-aware critical sections (v0.02 - unified mutex interface)
 - **Bit** - Bit manipulation utilities
-- **Mutex Common** - Unified mutex callback interface for consistent RTOS integration
+- **Mutex Common** - Unified mutex callback interface for consistent RTOS integration across all modules
+- **Common Utilities** - Shared utility functions for thread-safe mutex operations
 - **ThreadX Integration** - Unified memory allocation via byte pools
 - Additional utilities for common firmware tasks
 
@@ -23,9 +24,9 @@ cmake ..
 make
 ```
 
-### Unified Mutex Support
+### Unified Mutex Support with common.c
 
-All modules now use a unified `mutex_callbacks_t` interface defined in `mutex_common.h`:
+All modules now use a unified `mutex_callbacks_t` interface defined in `mutex_common.h` with common utility functions in `common.c`:
 
 ```c
 /* Unified mutex callback structure - shared by eLog and Ring */
@@ -35,6 +36,56 @@ typedef struct {
   mutex_result_t (*acquire)(void *mutex, uint32_t timeout_ms);  /* Lock with timeout */
   mutex_result_t (*release)(void *mutex);          /* Unlock */
 } mutex_callbacks_t;
+```
+
+Common utility functions provided by `common.c`:
+
+```c
+/**
+ * @brief Register RTOS mutex callbacks for all utilities
+ * @param callbacks Pointer to mutex callback structure
+ */
+void utilities_register_cs_cbs(const mutex_callbacks_t *callbacks);
+
+/**
+ * @brief Check if RTOS is ready for mutex operations
+ * @return true if RTOS scheduler is running
+ */
+bool utilities_is_RTOS_ready(void);
+
+/**
+ * @brief Set RTOS ready state
+ * @param status true when ThreadX scheduler starts
+ */
+void utilities_set_RTOS_ready(bool status);
+
+/**
+ * @brief Create a mutex using registered callbacks
+ * @return MUTEX_OK on success
+ */
+mutex_result_t utilities_mutex_create(void* mutex);
+
+/**
+ * @brief Acquire (lock) a mutex with timeout
+ * @param mutex Pointer to mutex
+ * @param timeout_ms Timeout in milliseconds
+ * @return MUTEX_OK, MUTEX_TIMEOUT, or MUTEX_ERROR
+ */
+mutex_result_t utilities_mutex_take(void *mutex, uint32_t timeout_ms);
+
+/**
+ * @brief Release (unlock) a mutex
+ * @param mutex Pointer to mutex
+ * @return MUTEX_OK or MUTEX_ERROR
+ */
+mutex_result_t utilities_mutex_give(void *mutex);
+
+/**
+ * @brief Delete a mutex
+ * @param mutex Pointer to mutex
+ * @return MUTEX_OK or MUTEX_ERROR
+ */
+mutex_result_t utilities_mutex_delete(void *mutex);
 ```
 
 This allows both eLog and Ring to share the same callback implementation!
@@ -62,6 +113,23 @@ void byte_release(void *ptr);
 
 ### Quick Usage
 
+**Mutex Registration (in tx_application_define):**
+```c
+#include "mutex_common.h"
+
+extern const mutex_callbacks_t mutex_callbacks;
+
+void tx_application_define(VOID *first_unused_memory) {
+    // Register unified callbacks for all utilities
+    utilities_register_cs_cbs(&mutex_callbacks);
+    
+    // Set RTOS ready flag after scheduler starts
+    utilities_set_RTOS_ready(true);
+    
+    // ... rest of initialization ...
+}
+```
+
 **Memory Allocation (ThreadX Integration):**
 ```c
 #include "rtos.h"  // Provides byte_allocate() and byte_release()
@@ -86,11 +154,6 @@ void app_task(void) {
 #include "eLog.h"
 #include "mutex_common.h"
 
-// Register ThreadX mutex callbacks
-extern const mutex_callbacks_t mutex_callbacks;
-elog_register_mutex_callbacks(&mutex_callbacks);
-elog_update_RTOS_ready(true);
-
 int main(void) {
     LOG_INIT_WITH_CONSOLE();
     
@@ -99,6 +162,37 @@ int main(void) {
     ELOG_ERROR(ELOG_MD_MAIN, "Error occurred");
     
     return 0;
+}
+```
+
+**Ring Buffer with Unified Mutex (Thread-Safe):**
+```c
+#include "ring.h"
+#include "mutex_common.h"
+
+ring_t sensor_data_ring;
+
+void sensor_task(void) {
+    // Each ring buffer automatically gets its own mutex
+    ring_init_dynamic(&sensor_data_ring, 256, sizeof(SensorData));
+    
+    SensorData data;
+    // Write is automatically protected by per-instance mutex
+    ring_write(&sensor_data_ring, &data);
+    
+    // Read is automatically protected by per-instance mutex
+    ring_read(&sensor_data_ring, &data);
+    
+    ring_destroy(&sensor_data_ring);
+}
+```
+
+## Module Overview
+
+- **eLog** - See [ELOG.md](ELOG.md) for comprehensive logging documentation
+- **Ring** - See [RING.md](RING.md) for circular buffer documentation
+- **Unified Mutex** - See [UNIFIED_MUTEX_GUIDE.md](UNIFIED_MUTEX_GUIDE.md) for integration details
+- **Common** - Utilities functions in `common.c` provide centralized mutex and RTOS state management    return 0;
 }
 ```
 

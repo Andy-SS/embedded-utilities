@@ -14,9 +14,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdlib.h>
-
-static mutex_callbacks_t *s_cs_callbacks = NULL;
-#define MUTEX_TIMEOUT_MS 1000
+#include "mutex_common.h"
 
 /***********************************************************
  * @brief  Platform specific critical section macros
@@ -38,36 +36,32 @@ __attribute__((always_inline)) static inline void __set_PRIMASK(uint32_t priMask
 
 #define EXIT_CRITICAL_SECTION() __set_PRIMASK(primask_bit)
 /***********************************************************/
-
-/* NEW: Simple callback-based macros accepting mutex parameter */
-#define START_CRITICAL_SECTION(mutex, time_out, pbit) do { \
-  if (s_cs_callbacks && s_cs_callbacks->acquire && (mutex)) { \
-    s_cs_callbacks->acquire(mutex, time_out); \
-  } else if((mutex == NULL) && (s_cs_callbacks != NULL) && (s_cs_callbacks->create != NULL)) { \
-    mutex = s_cs_callbacks->create(); \
-    if (mutex != NULL) s_cs_callbacks->acquire(mutex, time_out); \
-  } else{ \
-    pbit = __get_PRIMASK(); \
-  } \
-} while(0)
-
-#define STOP_CRITICAL_SECTION(mutex, pbit) do { \
-  if (s_cs_callbacks && s_cs_callbacks->release && (mutex)) { \
-    s_cs_callbacks->release(mutex); \
-  } else { \
-    __set_PRIMASK(pbit); \
-  } \
-} while(0)
-
-/**
- * @brief Register critical section callbacks with ring buffer
- * @param callbacks: Pointer to callback structure (NULL for no synchronization)
- * @return true on success
- */
-bool ring_register_cs_callbacks(const mutex_callbacks_t *callbacks)
+bool ring_is_rtos_ready(void)
 {
-  s_cs_callbacks = (mutex_callbacks_t *)callbacks;
-  return true;
+  return utilities_is_RTOS_ready();
+}
+
+void enter_cs(ring_t *r){
+  if (ring_is_rtos_ready()){
+    if(r->mutex != NULL)
+      utilities_mutex_take(r->mutex, MUTEX_TIMEOUT_MS);
+    else{
+      // Mutex not created yet, create it now
+      if(utilities_mutex_create(r->mutex) == MUTEX_OK){
+        utilities_mutex_take(r->mutex, MUTEX_TIMEOUT_MS);
+      }
+    }
+  } else {
+    r->primask_bit = __get_PRIMASK();
+  }
+}
+
+void exit_cs(ring_t *r){
+  if (r->mutex != NULL){
+    utilities_mutex_give(r->mutex);
+  } else {
+    __set_PRIMASK(r->primask_bit);
+  }
 }
 
 
@@ -83,8 +77,8 @@ void ring_init(ring_t *rb, void *buffer, uint32_t size, size_t element_size) {
   rb->primask_bit = 0;
   rb->mutex = NULL;
   /* Create a new mutex for this ring buffer instance */
-  if (s_cs_callbacks && s_cs_callbacks->create) {
-    rb->mutex = s_cs_callbacks->create();
+  if (utilities_is_RTOS_ready()){
+    utilities_mutex_create(rb->mutex);
   }
 }
 
@@ -117,8 +111,8 @@ bool ring_init_dynamic(ring_t *rb, uint32_t size, size_t element_size) {
   rb->mutex = NULL;
   rb->primask_bit = 0;
   /* Create a new mutex for this ring buffer instance */
-  if (s_cs_callbacks && s_cs_callbacks->create) {
-    rb->mutex = s_cs_callbacks->create();
+  if (utilities_is_RTOS_ready()){
+    utilities_mutex_create(rb->mutex);
   }
   
 #ifdef ESP_IDF_VERSION
@@ -154,8 +148,8 @@ void ring_destroy(ring_t *rb) {
   rb->owns_buffer = false;
   rb->primask_bit = 0;
   // Destroy the mutex if it exists
-  if (rb->mutex && s_cs_callbacks && s_cs_callbacks->destroy) {
-    s_cs_callbacks->destroy(rb->mutex);
+  if (rb->mutex != NULL){
+    utilities_mutex_delete(rb->mutex);
   }
   rb->mutex = NULL;
 }
@@ -169,11 +163,11 @@ bool ring_is_owns_buffer(const ring_t *rb) {
 }
 
 void ring_clear(ring_t *rb) {
-  START_CRITICAL_SECTION(rb->mutex, MUTEX_TIMEOUT_MS, rb->primask_bit);
+  enter_cs(rb);
   rb->head = 0;
   rb->tail = 0;
   rb->count = 0;
-  STOP_CRITICAL_SECTION(rb->mutex, rb->primask_bit);
+  exit_cs(rb);
 }
 
 // Check if the ring buffer is empty
@@ -185,21 +179,21 @@ bool ring_is_full(const ring_t *rb) { return rb->count == rb->size; }
 // Write an element to the ring buffer
 bool ring_write(ring_t *rb, const void *data) {
   if (ring_is_full(rb)) { return false; }
-  START_CRITICAL_SECTION(rb->mutex, MUTEX_TIMEOUT_MS, rb->primask_bit);
+  enter_cs(rb);
 
   // Calculate the offset and copy the data
   void *dest = (uint8_t *)rb->buffer + (rb->head * rb->element_size);
   memcpy(dest, data, rb->element_size);
   rb->head = (rb->head + 1) % rb->size; // Increment head with wrap-around
   rb->count++;                          // Increment count
-  STOP_CRITICAL_SECTION(rb->mutex, rb->primask_bit);
+  exit_cs(rb);
   return true;
 }
 
 // Write an element to the ring buffer (overwrites oldest data if full)
 bool ring_push_front(ring_t *rb, const void *data) {
   if (rb == NULL) { return false; }
-  START_CRITICAL_SECTION(rb->mutex, MUTEX_TIMEOUT_MS, rb->primask_bit);
+  enter_cs(rb);
 
   bool was_full = ring_is_full(rb);
   
@@ -217,7 +211,7 @@ bool ring_push_front(ring_t *rb, const void *data) {
     // Buffer wasn't full, increment count
     rb->count++;
   }
-  STOP_CRITICAL_SECTION(rb->mutex, rb->primask_bit);
+  exit_cs(rb);
   return true;
 }
 
@@ -225,7 +219,7 @@ bool ring_push_front(ring_t *rb, const void *data) {
 uint32_t ring_push_back(ring_t *rb, const void *data, uint32_t count) {
   if (rb == NULL || data == NULL || count == 0) { return 0; }
 
-  START_CRITICAL_SECTION(rb->mutex, MUTEX_TIMEOUT_MS, rb->primask_bit);
+  enter_cs(rb);
 
   uint32_t head = rb->head;
   uint32_t tail = rb->tail;
@@ -251,7 +245,7 @@ uint32_t ring_push_back(ring_t *rb, const void *data, uint32_t count) {
   rb->head = head;
   rb->tail = tail;
   rb->count = current_count;
-  STOP_CRITICAL_SECTION(rb->mutex, rb->primask_bit);
+  exit_cs(rb);
   return elements_to_write;
 }
 
@@ -263,10 +257,10 @@ bool ring_read(ring_t *rb, void *data) {
   // Calculate the offset and copy the data
   void *src = (uint8_t *)rb->buffer + (rb->tail * rb->element_size);
   memcpy(data, src, rb->element_size);
-  START_CRITICAL_SECTION(rb->mutex, MUTEX_TIMEOUT_MS, rb->primask_bit);
+  enter_cs(rb);
   rb->tail = (rb->tail + 1) % rb->size; // Increment tail with wrap-around
   rb->count--;                          // Decrement count
-  STOP_CRITICAL_SECTION(rb->mutex, rb->primask_bit); 
+  exit_cs(rb); 
   return true;
 }
 
@@ -304,7 +298,7 @@ uint32_t ring_get_free(const ring_t *rb) {
 uint32_t ring_write_multiple(ring_t *rb, const void *data, uint32_t count) {
   if (rb == NULL || data == NULL || count == 0) { return 0; }
 
-  START_CRITICAL_SECTION(rb->mutex, MUTEX_TIMEOUT_MS, rb->primask_bit);
+  enter_cs(rb);
   uint32_t free_slots = ring_get_free(rb);
   uint32_t elements_to_write = (count > free_slots) ? free_slots : count;
 
@@ -327,7 +321,7 @@ uint32_t ring_write_multiple(ring_t *rb, const void *data, uint32_t count) {
   // Atomic update of head and count
   rb->head = (head + elements_to_write) % rb->size;
   rb->count += elements_to_write;
-  STOP_CRITICAL_SECTION(rb->mutex, rb->primask_bit);
+  exit_cs(rb);
   return elements_to_write;
 }
 
@@ -335,7 +329,7 @@ uint32_t ring_write_multiple(ring_t *rb, const void *data, uint32_t count) {
 uint32_t ring_read_multiple(ring_t *rb, void *data, uint32_t count) {
   if (rb == NULL || data == NULL || count == 0) { return 0; }
 
-  START_CRITICAL_SECTION(rb->mutex, MUTEX_TIMEOUT_MS, rb->primask_bit);
+  enter_cs(rb);
 
   uint32_t available = ring_available(rb);
   uint32_t elements_to_read = (count > available) ? available : count;
@@ -359,7 +353,7 @@ uint32_t ring_read_multiple(ring_t *rb, void *data, uint32_t count) {
   // Atomic update of tail and count
   rb->tail = (tail + elements_to_read) % rb->size;
   rb->count -= elements_to_read;
-  STOP_CRITICAL_SECTION(rb->mutex, rb->primask_bit);
+  exit_cs(rb);
   return elements_to_read;
 }
 
@@ -370,10 +364,10 @@ bool ring_pop_back(ring_t *rb) {
   }
 
   // Atomic decrement of head and count
-  START_CRITICAL_SECTION(rb->mutex, MUTEX_TIMEOUT_MS, rb->primask_bit);
+  enter_cs(rb);
   rb->head = (rb->head == 0) ? (rb->size - 1) : (rb->head - 1);
   rb->count--;
-  STOP_CRITICAL_SECTION(rb->mutex, rb->primask_bit);
+  exit_cs(rb);
   return true;
 }
 
@@ -381,7 +375,7 @@ bool ring_pop_back(ring_t *rb) {
 uint32_t ring_pop_back_multiple(ring_t *rb, uint32_t count) {
   if (rb == NULL || count == 0 || ring_is_empty(rb)) { return 0; }
 
-  START_CRITICAL_SECTION(rb->mutex, MUTEX_TIMEOUT_MS, rb->primask_bit);
+  enter_cs(rb);
 
   // Limit count to available elements
   uint32_t available = ring_available(rb);
@@ -395,7 +389,7 @@ uint32_t ring_pop_back_multiple(ring_t *rb, uint32_t count) {
   }
   rb->count -= elements_to_remove;
 
-  STOP_CRITICAL_SECTION(rb->mutex, rb->primask_bit);
+  exit_cs(rb);
   return elements_to_remove;
 }
 
@@ -406,10 +400,10 @@ bool RingBuffer_PopFront(ring_t *rb) {
   }
 
   // Atomic increment of tail and decrement count
-  START_CRITICAL_SECTION(rb->mutex, MUTEX_TIMEOUT_MS, rb->primask_bit);
+  enter_cs(rb);
   rb->tail = (rb->tail + 1) % rb->size;
   rb->count--;
-  STOP_CRITICAL_SECTION(rb->mutex, rb->primask_bit);
+  exit_cs(rb);
   return true;
 }
 
@@ -417,7 +411,7 @@ bool RingBuffer_PopFront(ring_t *rb) {
 uint32_t RingBuffer_PopFrontMultiple(ring_t *rb, uint32_t count) {
   if (rb == NULL || count == 0 || ring_is_empty(rb)) { return 0; }
   
-  START_CRITICAL_SECTION(rb->mutex, MUTEX_TIMEOUT_MS, rb->primask_bit);
+  enter_cs(rb);
 
   // Limit count to available elements
   uint32_t available = ring_available(rb);
@@ -426,7 +420,7 @@ uint32_t RingBuffer_PopFrontMultiple(ring_t *rb, uint32_t count) {
   // Atomic increment of tail and decrement count
   rb->tail = (rb->tail + elements_to_remove) % rb->size;
   rb->count -= elements_to_remove;
-  STOP_CRITICAL_SECTION(rb->mutex, rb->primask_bit);
+  exit_cs(rb);
   return elements_to_remove;
 }
 
@@ -487,8 +481,8 @@ uint32_t ring_dump(ring_t *src_rb, ring_t *dst_rb, bool preserve_source) {
   // Check element size compatibility
   if (src_rb->element_size != dst_rb->element_size) { return 0; }
 
-  START_CRITICAL_SECTION(src_rb->mutex, MUTEX_TIMEOUT_MS, src_rb->primask_bit);
-  START_CRITICAL_SECTION(dst_rb->mutex, MUTEX_TIMEOUT_MS, dst_rb->primask_bit);
+  enter_cs(src_rb);
+  enter_cs(dst_rb);
 
   // Get available elements in source and free space in destination
   uint32_t src_available = ring_available(src_rb);
@@ -498,8 +492,8 @@ uint32_t ring_dump(ring_t *src_rb, ring_t *dst_rb, bool preserve_source) {
   
   // Source has no data to copy or destination is full
   if ((src_available == 0) ||(elements_to_copy == 0)) {
-    STOP_CRITICAL_SECTION(src_rb->mutex, src_rb->primask_bit);
-    STOP_CRITICAL_SECTION(dst_rb->mutex, dst_rb->primask_bit);
+    exit_cs(src_rb);
+    exit_cs(dst_rb);
     return 0;  // Nothing to copy
   }
   
@@ -551,8 +545,8 @@ uint32_t ring_dump(ring_t *src_rb, ring_t *dst_rb, bool preserve_source) {
   } else {
     dst_rb->count = dst_rb->size;  // Clamp to maximum size
   }
-  STOP_CRITICAL_SECTION(src_rb->mutex, src_rb->primask_bit);
-  STOP_CRITICAL_SECTION(dst_rb->mutex, dst_rb->primask_bit);
+  exit_cs(src_rb);
+  exit_cs(dst_rb);
   return copied_count;
 }
 
@@ -563,8 +557,8 @@ uint32_t ring_dump_count(ring_t *src_rb, ring_t *dst_rb, uint32_t max_count, boo
   // Check element size compatibility
   if (src_rb->element_size != dst_rb->element_size) { return 0; }
 
-  START_CRITICAL_SECTION(src_rb->mutex, MUTEX_TIMEOUT_MS, src_rb->primask_bit);
-  START_CRITICAL_SECTION(dst_rb->mutex, MUTEX_TIMEOUT_MS, dst_rb->primask_bit);
+  enter_cs(src_rb);
+  enter_cs(dst_rb);
   
 
   // Get available elements in source and free space in destination
@@ -582,8 +576,8 @@ uint32_t ring_dump_count(ring_t *src_rb, ring_t *dst_rb, uint32_t max_count, boo
   
   // Source has no data to copy or destination is full
   if ((elements_to_copy == 0) || (src_available == 0)) {
-    STOP_CRITICAL_SECTION(src_rb->mutex, src_rb->primask_bit);
-    STOP_CRITICAL_SECTION(dst_rb->mutex, dst_rb->primask_bit);
+    exit_cs(src_rb);
+    exit_cs(dst_rb);
     return 0;  // Nothing to copy or destination is full
   }
   
@@ -635,8 +629,8 @@ uint32_t ring_dump_count(ring_t *src_rb, ring_t *dst_rb, uint32_t max_count, boo
   } else {
     dst_rb->count = dst_rb->size;  // Clamp to maximum size
   }
-  STOP_CRITICAL_SECTION(src_rb->mutex, src_rb->primask_bit);
-  STOP_CRITICAL_SECTION(dst_rb->mutex, dst_rb->primask_bit);
+  exit_cs(src_rb);
+  exit_cs(dst_rb);
   
   return copied_count;
 }

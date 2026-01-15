@@ -28,7 +28,6 @@
 #define ELOG_RTOS_CMSIS      3      /* CMSIS-RTOS */
 
 // /* Default eLog Configuration - Override these in your project if needed */
-#define ELOG_THREAD_SAFE 1
 #define ELOG_RTOS_TYPE ELOG_RTOS_THREADX
 #define ELOG_MUTEX_TIMEOUT_MS 500
 
@@ -117,18 +116,6 @@ static inline const char *debug_get_filename(const char *fullpath) {
 #define ELOG_MAX_MESSAGE_LENGTH 256
 #define ELOG_MAX_LOCATION_LENGTH 64
 #endif
-
-/* ========================================================================== */
-/* Thread Safety Configuration */
-/* ========================================================================== */
-#if (ELOG_THREAD_SAFE == 1)
-#include "mutex_common.h"
-/**
- * @brief Register mutex callback functions with eLog
- * @param callbacks: Pointer to callback structure (NULL to disable thread safety)
- */
-bool elog_register_mutex_callbacks(const mutex_callbacks_t *callbacks);
-#endif /* ELOG_THREAD_SAFE */
 
 /* ========================================================================== */
 /* Enhanced Logging Types and Enums */

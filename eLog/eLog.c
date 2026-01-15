@@ -11,6 +11,7 @@
  ************************************************************/
 
 #include "eLog.h"
+#include "mutex_common.h"
 #include <inttypes.h>  // For PRIu32 macro
 #include <stdarg.h>
 #include <stdio.h>
@@ -19,10 +20,6 @@
 /* ========================================================================== */
 /* Enhanced Logging Internal State */
 /* ========================================================================== */
-
-#if defined(ELOG_RTOS_TYPE)
-volatile bool RTOS_READY = false; // Flag to indicate if RTOS is ready
-#endif
 
 /**
  * @brief Subscriber entry structure
@@ -39,13 +36,7 @@ static int s_num_subscribers = 0;
 
 /* Static message buffer for formatting */
 static char s_message_buffer[ELOG_MAX_MESSAGE_LENGTH];
-
-#if (ELOG_THREAD_SAFE == 1)
-/* Mutex for thread safety */
-static int s_mutex_initialized = 0;
-static mutex_callbacks_t *s_mutex_callbacks = NULL;
-static void *s_log_mutex;
-#endif
+static void *s_log_mutex = NULL;  // Mutex for thread safety
 
 typedef struct
 {
@@ -151,28 +142,7 @@ void elog_console_subscriber(elog_level_t level, const char *msg)
  */
 static bool elog_is_RTOS_ready(void)
 {
-#if (ELOG_THREAD_SAFE == 1)
-  return RTOS_READY;
-#else
-  return false; // No RTOS in bare metal, always false
-#endif
-}
-
-/**
- * @brief Create a mutex for logging synchronization
- * @return Thread operation result
- */
-static mutex_result_t elog_mutex_create(void)
-{
- 
-#if (ELOG_THREAD_SAFE == 1)
-  if (s_mutex_callbacks && s_mutex_callbacks->create)
-  {
-    s_log_mutex = s_mutex_callbacks->create();
-    return MUTEX_OK;
-  }
-#endif
-  return MUTEX_ERROR;
+  return utilities_is_RTOS_ready();
 }
 
 /**
@@ -182,16 +152,15 @@ static mutex_result_t elog_mutex_create(void)
  */
 static mutex_result_t elog_mutex_take(void *mutex, uint32_t timeout_ms)
 {
-  // Check if the system state is 0
+  // RTOS not ready, no mutex needed
   if (!elog_is_RTOS_ready()) { return MUTEX_OK; }
-#if (ELOG_THREAD_SAFE == 1)
-  if (s_mutex_callbacks && s_mutex_callbacks->acquire)
-  {
-    return s_mutex_callbacks->acquire(mutex, timeout_ms);
+  else if (mutex == NULL && elog_is_RTOS_ready()){
+    utilities_mutex_create(mutex);
   }
-#endif
+  if(mutex != NULL){
+    return utilities_mutex_take(mutex, timeout_ms);
+  }
   return MUTEX_OK;
-
 }
 
 /**
@@ -201,71 +170,19 @@ static mutex_result_t elog_mutex_take(void *mutex, uint32_t timeout_ms)
 static mutex_result_t elog_mutex_give(void *mutex)
 {
   if (!elog_is_RTOS_ready()) { return MUTEX_OK; }
-#if (ELOG_THREAD_SAFE == 1)
-  if (s_mutex_callbacks && s_mutex_callbacks->release)
-  {
-    return s_mutex_callbacks->release(mutex);
+  else if (mutex != NULL){
+    return utilities_mutex_give(mutex);
   }
-#endif
   return MUTEX_OK;
-
 }
 
-/**
- * @brief Delete a mutex
- * @return Thread operation result
- */
+
 static mutex_result_t elog_mutex_delete(void *mutex)
 {
-#if (ELOG_THREAD_SAFE == 1)
-  if (s_mutex_callbacks && s_mutex_callbacks->destroy)
-  {
-    return s_mutex_callbacks->destroy(mutex);
+  if (mutex != NULL){
+    return utilities_mutex_delete(mutex);
   }
-#endif
   return MUTEX_OK;
-}
-
-#if (ELOG_THREAD_SAFE == 1)
-/**
- * @brief Register mutex callback functions with eLog
- * @param callbacks: Pointer to callback structure (NULL to disable thread safety)
- * @return true on success, false if already initialized
- */
-bool elog_register_mutex_callbacks(const mutex_callbacks_t *callbacks)
-{
-  if (s_mutex_initialized) {
-    return false;  /* Cannot change callbacks after init */
-  }
-  
-  s_mutex_callbacks = (mutex_callbacks_t *)callbacks;
-  return true;
-}
-
-#endif
-
-/**
- * @brief Update the RTOS_READY flag
- * @param ready: Boolean value indicating if RTOS is ready (1) or not (0)
- */
-void elog_update_RTOS_ready(bool ready)
-{
-#if (ELOG_THREAD_SAFE == 1)
-/* Initialize mutex for thread safety */
-if (!s_mutex_initialized)
-{
-  if (elog_mutex_create() == MUTEX_OK)
-  {
-    s_mutex_initialized = 1;
-  }
-}
-
-/* Update RTOS_READY flag */
-RTOS_READY = ready;
-#else
-  (void)ready; // No RTOS, no action needed
-#endif
-
 }
 
 /**

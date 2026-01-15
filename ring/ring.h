@@ -14,7 +14,6 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#define RING_USE_RTOS_MUTEX 1  /* Set to 1 to enable RTOS mutex support */
 
 typedef struct {
   void *buffer;        // Pointer to the buffer (allocated elsewhere or dynamically)
@@ -27,17 +26,6 @@ typedef struct {
   size_t element_size; // Size of each element in bytes
   bool owns_buffer;    // true if buffer was dynamically allocated and should be freed
 } ring_t;
-
-#if RING_USE_RTOS_MUTEX
-#include "mutex_common.h"
-
-/**
- * @brief Register critical section callbacks with ring buffer
- * @param callbacks: Pointer to callback structure (NULL for no synchronization)
- * @return true on success
- */
-bool ring_register_cs_callbacks(const mutex_callbacks_t *callbacks);
-#endif /* RING_USE_RTOS_MUTEX */
 
 /**
  * @brief Initializes a ring buffer.
