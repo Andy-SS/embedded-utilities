@@ -18,9 +18,8 @@
 
 typedef struct {
   void *buffer;        // Pointer to the buffer (allocated elsewhere or dynamically)
-  #if RING_USE_RTOS_MUTEX
   void *mutex;         // Per-instance mutex handle (created during Init)
-  #endif
+  uint32_t primask_bit; // For non-RTOS critical sections
   uint32_t head;       // Write index
   uint32_t tail;       // Read index
   uint32_t size;       // Maximum number of elements
