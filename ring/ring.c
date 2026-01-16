@@ -17,7 +17,8 @@
 #include "mutex_common.h"
 
 /***********************************************************
- * @brief  Platform specific critical section macros
+ * @brief  Platform specific critical section macros for GCC ARM Cortex-M
+ *         Uses PRIMASK to disable/enable interrupts
 ************************************************************/
 __attribute__((always_inline)) static inline uint32_t __get_PRIMASK(void)
 {
@@ -54,6 +55,12 @@ __attribute__((always_inline)) static inline uint32_t __is_isr_context(void)
 static void ring_enter_cs(ring_t *r){
   if (r == NULL) return;
 
+  /* If we're in ISR context, NEVER try to take a mutex; just mask IRQs */
+  if (__is_isr_context()) {
+    r->primask_bit = __get_PRIMASK();
+    return;
+  }
+
   if (utilities_is_RTOS_ready()){
     // Lazy-create mutex on first use if not already created
     if (r->mutex == NULL) {
@@ -62,8 +69,7 @@ static void ring_enter_cs(ring_t *r){
     
     // If we now have a valid mutex, try to acquire it
     if (r->mutex != NULL) {
-      mutex_result_t result = utilities_mutex_take(r->mutex, MUTEX_TIMEOUT_MS);
-      if (result == MUTEX_OK) {
+      if (utilities_mutex_take(r->mutex, MUTEX_TIMEOUT_MS) == MUTEX_OK) {
         return;
       }
       // If mutex_take failed, fall through to interrupt disable as fallback
@@ -71,18 +77,24 @@ static void ring_enter_cs(ring_t *r){
     // If mutex NULL or take failed, fall through to interrupt disable
   }
   
-  // Fallback: Disable interrupts if RTOS not ready, ISR context, mutex creation failed, or take failed
-  r->primask_bit = __get_PRIMASK();  // Read and disable
+  // Fallback: Disable interrupts if RTOS not ready, mutex creation failed, or take failed
+  r->primask_bit = __get_PRIMASK();  // Save and disable in per-instance storage
 }
 
 static void ring_exit_cs(ring_t *r){
   if (r == NULL) return;
 
+  /* If we're in ISR context, just restore interrupt state */
+  if (__is_isr_context()) {
+    __set_PRIMASK(r->primask_bit);
+    return;
+  }
+
   if (r->mutex != NULL) {
     utilities_mutex_give(r->mutex);
     return;
   }
-  // Restore interrupt state first, then release mutex if used.
+  // Restore interrupt state from per-instance storage
   __set_PRIMASK(r->primask_bit);
 }
 
@@ -131,7 +143,6 @@ bool ring_init_dynamic(ring_t *rb, uint32_t size, size_t element_size) {
   // Mutex will be created lazily on first use in ring_enter_cs()
   // This allows ring to be initialized before RTOS is ready
   rb->mutex = NULL;
-  rb->primask_bit = 0;    // Initialize saved interrupt state
 #ifdef ESP_IDF_VERSION
   ESP_LOGI(TAG, "Dynamically allocated ring buffer: %u elements × %zu bytes = %zu bytes total", 
            size, element_size, total_size);

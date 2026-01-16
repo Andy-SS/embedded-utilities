@@ -14,6 +14,11 @@ A collection of lightweight, modular C utilities for embedded firmware developme
 
 ## Getting Started
 
+### ⚠️ **IMPORTANT: Start Here**
+
+👉 **[DOCUMENTATION_INDEX.md](DOCUMENTATION_INDEX.md)** - Navigation guide to all documentation  
+Select your use case and get the right doc for your task!
+
 ### Building
 
 Using CMake:
@@ -23,6 +28,14 @@ cd build
 cmake ..
 make
 ```
+
+### 🎯 Quick Links
+
+**Using UART + DMA + Ring Buffer + printf?**  
+→ Read [UART_DMA_STDOUT_INTEGRATION.md](UART_DMA_STDOUT_INTEGRATION.md) ⭐ **Critical**
+
+**Symptoms**: "Prints 10 chars then stops" or hangs on early boot logging  
+→ This doc has the fix!
 
 ### Unified Mutex Support with common.c
 
@@ -235,8 +248,23 @@ int main(void) {
 
 ## Documentation
 
-- [eLog Documentation](docs/ELOG.md) - Thread-safe logging with mutex integration
-- [Ring Buffer Documentation](docs/RING.md) - Circular buffer with unified mutex callbacks
+### Core References
+- [ELOG.md](ELOG.md) - Thread-safe logging system with RTOS support
+- [RING.md](RING.md) - Circular buffer with per-instance mutex callbacks
+- [COMMON.md](COMMON.md) - Shared utility functions and RTOS integration
+
+### Architecture & Integration
+- **[UART_DMA_STDOUT_INTEGRATION.md](UART_DMA_STDOUT_INTEGRATION.md)** ⭐ **START HERE** if using ring buffer for UART/printf logging
+  - Explains the stable pattern that prevents hangs and deadlocks
+  - Critical section ordering and power management
+  - Common mistakes and how to avoid them
+  
+- [UART_DMA_INTEGRATION_CHECKLIST.md](UART_DMA_INTEGRATION_CHECKLIST.md) - Pre-deployment validation
+  - Phase-by-phase verification of correct integration
+  - Test cases and troubleshooting
+  
+- [INTEGRATION_GUIDE.md](INTEGRATION_GUIDE.md) - 3-step unified mutex setup
+- [UNIFIED_MUTEX_GUIDE.md](UNIFIED_MUTEX_GUIDE.md) - Architecture overview
 - [Unified Mutex Guide](UNIFIED_MUTEX_GUIDE.md) - Detailed interface and integration guide
 - [Ring Buffer Usage](RING_USAGE.md) - Comprehensive ring buffer usage examples
 

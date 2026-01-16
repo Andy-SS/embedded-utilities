@@ -327,15 +327,6 @@ target_include_directories(eLog PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 - `acquire`: takes `void *mutex` and `uint32_t timeout_ms`, returns `mutex_result_t`
 - `release`: takes `void *mutex`, returns `mutex_result_t`
 
-### Runtime: Mutex operations timeout
-
-**Reason**: `ELOG_MUTEX_TIMEOUT_MS` may be too short (default 500ms)
-
-**Solution**: Increase in eLog.h:
-```c
-#define ELOG_MUTEX_TIMEOUT_MS 1000  /* Increase timeout */
-```
-
 ## Summary
 
 ✅ Single unified mutex interface for both eLog and Ring
