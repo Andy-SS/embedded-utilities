@@ -16,6 +16,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include "mutex_common.h"
 
 /* ========================================================================== */
 /* Enhanced Logging Configuration */
@@ -553,6 +554,13 @@ extern void elog_console_subscriber(elog_level_t level, const char *msg);
 #define printTRACE(module, format, ...)
 #define printTRACE_STR(module, str)
 #endif
+
+/**
+ * @brief Register mutex callback functions with eLog
+ * @param callbacks: Pointer to callback structure containing mutex function pointers
+ * @return true on success, false if already initialized
+ */
+bool elog_register_mutex_callbacks(const mutex_callbacks_t *callbacks);
 
 /**
  * @brief Update the RTOS_READY flag

@@ -19,6 +19,7 @@
 typedef struct {
   void *buffer;        // Pointer to the buffer (allocated elsewhere or dynamically)
   void *mutex;         // Per-instance mutex handle (created during Init)
+  bool cs_used_mutex;  // Tracks whether enter_cs() successfully acquired the mutex
   uint32_t primask_bit; // For non-RTOS critical sections
   uint32_t head;       // Write index
   uint32_t tail;       // Read index
