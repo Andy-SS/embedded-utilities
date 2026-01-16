@@ -27,30 +27,40 @@ bool utilities_is_RTOS_ready(void){
   return RTOS_READY;
 }
 
-mutex_result_t utilities_mutex_create(void* mutex){
+void* utilities_mutex_create(void){
   if(utilities_is_RTOS_ready() && cs_callbacks != NULL){
-    mutex = cs_callbacks->create();
+    return cs_callbacks->create();
   }
-  // Return success if mutex handle is valid
-  if (mutex != NULL){
-    return MUTEX_OK;
-  }
-  // Return error if mutex creation failed
-  return MUTEX_ERROR;
+  // Return NULL if RTOS not ready or callbacks not registered
+  return NULL;
 }
 
 mutex_result_t utilities_mutex_take(void *mutex, uint32_t timeout_ms){
-  if(utilities_is_RTOS_ready() && cs_callbacks != NULL && mutex != NULL){
-    return cs_callbacks->acquire(mutex, timeout_ms);
+  // If mutex is NULL, cannot take (caller should fall back to interrupt disable)
+  if(mutex == NULL){
+    return MUTEX_ERROR;
   }
-  return MUTEX_ERROR;
+  
+  // If RTOS not ready or callbacks not registered, also fail
+  if(!utilities_is_RTOS_ready() || cs_callbacks == NULL){
+    return MUTEX_ERROR;
+  }
+  
+  return cs_callbacks->acquire(mutex, timeout_ms);
 }
 
 mutex_result_t utilities_mutex_give(void *mutex){
-  if(utilities_is_RTOS_ready() && cs_callbacks != NULL && mutex != NULL){
-    return cs_callbacks->release(mutex);
+  // If mutex is NULL, cannot give (caller must have used interrupt disable)
+  if(mutex == NULL){
+    return MUTEX_ERROR;
   }
-  return MUTEX_ERROR;
+  
+  // If RTOS not ready or callbacks not registered, also fail
+  if(!utilities_is_RTOS_ready() || cs_callbacks == NULL){
+    return MUTEX_ERROR;
+  }
+  
+  return cs_callbacks->release(mutex);
 }
 
 mutex_result_t utilities_mutex_delete(void *mutex){

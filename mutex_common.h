@@ -14,7 +14,7 @@
 #include <stdbool.h>
 
 #define RING_USE_RTOS_MUTEX 1  /* Set to 1 to enable RTOS mutex support */
-#define MUTEX_TIMEOUT_MS 500 /* Default mutex timeout in milliseconds */
+#define MUTEX_TIMEOUT_MS 0 /* Default mutex timeout in milliseconds, 0 means no wait */
 /* Unified Mutex Result Codes */
 typedef enum {
   MUTEX_OK = 0,
@@ -43,7 +43,7 @@ bool utilities_is_RTOS_ready(void);
 
 void utilities_set_RTOS_ready(bool status);
 
-mutex_result_t utilities_mutex_create(void* mutex);
+void* utilities_mutex_create(void);
 
 mutex_result_t utilities_mutex_take(void *mutex, uint32_t timeout_ms);
 

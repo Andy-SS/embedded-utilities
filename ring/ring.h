@@ -18,13 +18,13 @@
 typedef struct {
   void *buffer;        // Pointer to the buffer (allocated elsewhere or dynamically)
   void *mutex;         // Per-instance mutex handle (created during Init)
-  uint32_t primask_bit; // For non-RTOS critical sections
   uint32_t head;       // Write index
   uint32_t tail;       // Read index
   uint32_t size;       // Maximum number of elements
   uint32_t count;      // Current number of elements in buffer (optimizes full/empty detection)
   size_t element_size; // Size of each element in bytes
   bool owns_buffer;    // true if buffer was dynamically allocated and should be freed
+  uint32_t primask_bit; // Saved interrupt state for fallback critical section
 } ring_t;
 
 /**

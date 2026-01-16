@@ -29,7 +29,7 @@
 
 // /* Default eLog Configuration - Override these in your project if needed */
 #define ELOG_RTOS_TYPE ELOG_RTOS_THREADX
-#define ELOG_MUTEX_TIMEOUT_MS 500
+#define ELOG_MUTEX_TIMEOUT_MS 0 /* Mutex timeout in milliseconds, 0 means no wait */
 
 // Module list configuration
 typedef enum {
@@ -116,6 +116,10 @@ static inline const char *debug_get_filename(const char *fullpath) {
 #define ELOG_MAX_MESSAGE_LENGTH 256
 #define ELOG_MAX_LOCATION_LENGTH 64
 #endif
+
+/* ========================================================================== */
+/* Thread Safety Configuration */
+/* ========================================================================== */
 
 /* ========================================================================== */
 /* Enhanced Logging Types and Enums */
@@ -540,11 +544,5 @@ extern void elog_console_subscriber(elog_level_t level, const char *msg);
 #define printTRACE(module, format, ...)
 #define printTRACE_STR(module, str)
 #endif
-
-/**
- * @brief Update the RTOS_READY flag
- * @param ready: Boolean value indicating if RTOS is ready (1) or not (0)
- */
-void elog_update_RTOS_ready(bool ready);
 
 #endif /* APP_DEBUG_H_ */
