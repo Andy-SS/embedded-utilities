@@ -16,7 +16,6 @@
 #include <string.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include "mutex_common.h"
 
 /* ========================================================================== */
 /* Enhanced Logging Configuration */
@@ -29,9 +28,8 @@
 #define ELOG_RTOS_CMSIS      3      /* CMSIS-RTOS */
 
 // /* Default eLog Configuration - Override these in your project if needed */
-#define ELOG_THREAD_SAFE 1
 #define ELOG_RTOS_TYPE ELOG_RTOS_THREADX
-#define ELOG_MUTEX_TIMEOUT_MS 500
+#define ELOG_MUTEX_TIMEOUT_MS 0 /* Mutex timeout in milliseconds, 0 means no wait */
 
 // Module list configuration
 typedef enum {
@@ -122,14 +120,6 @@ static inline const char *debug_get_filename(const char *fullpath) {
 /* ========================================================================== */
 /* Thread Safety Configuration */
 /* ========================================================================== */
-#if (ELOG_THREAD_SAFE == 1)
-#include "mutex_common.h"
-/**
- * @brief Register mutex callback functions with eLog
- * @param callbacks: Pointer to callback structure (NULL to disable thread safety)
- */
-bool elog_register_mutex_callbacks(const mutex_callbacks_t *callbacks);
-#endif /* ELOG_THREAD_SAFE */
 
 /* ========================================================================== */
 /* Enhanced Logging Types and Enums */
@@ -554,18 +544,5 @@ extern void elog_console_subscriber(elog_level_t level, const char *msg);
 #define printTRACE(module, format, ...)
 #define printTRACE_STR(module, str)
 #endif
-
-/**
- * @brief Register mutex callback functions with eLog
- * @param callbacks: Pointer to callback structure containing mutex function pointers
- * @return true on success, false if already initialized
- */
-bool elog_register_mutex_callbacks(const mutex_callbacks_t *callbacks);
-
-/**
- * @brief Update the RTOS_READY flag
- * @param ready: Boolean value indicating if RTOS is ready (1) or not (0)
- */
-void elog_update_RTOS_ready(bool ready);
 
 #endif /* APP_DEBUG_H_ */

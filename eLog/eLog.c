@@ -15,6 +15,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
+#include "mutex_common.h"
 
 /* ========================================================================== */
 /* Enhanced Logging Internal State */
@@ -40,12 +41,8 @@ static int s_num_subscribers = 0;
 /* Static message buffer for formatting */
 static char s_message_buffer[ELOG_MAX_MESSAGE_LENGTH];
 
-#if (ELOG_THREAD_SAFE == 1)
 /* Mutex for thread safety */
-static volatile int s_mutex_initialized = 0;
-static volatile mutex_callbacks_t *s_mutex_callbacks = NULL;
 static volatile void *s_log_mutex;
-#endif
 
 typedef struct
 {
@@ -146,134 +143,6 @@ void elog_console_subscriber(elog_level_t level, const char *msg)
 /* ========================================================================== */
 
 /**
- * @brief Check if RTOS is ready
- * @return true if RTOS is ready, false otherwise
- */
-static bool elog_is_RTOS_ready(void)
-{
-#if (ELOG_THREAD_SAFE == 1)
-  return RTOS_READY;
-#else
-  return false; // No RTOS in bare metal, always false
-#endif
-}
-
-/**
- * @brief Create a mutex for logging synchronization
- * @return Thread operation result
- */
-static mutex_result_t elog_mutex_create(void)
-{
- 
-#if (ELOG_THREAD_SAFE == 1)
-  if (s_mutex_callbacks && s_mutex_callbacks->create)
-  {
-    s_log_mutex = s_mutex_callbacks->create();
-    return MUTEX_OK;
-  }
-#endif
-  return MUTEX_ERROR;
-}
-
-/**
- * @brief Take/lock a mutex with timeout
- * @param timeout_ms: Timeout in milliseconds
- * @return Thread operation result
- */
-static mutex_result_t elog_mutex_take(uint32_t timeout_ms)
-{
-  // Check if the system state is 0
-  if (!elog_is_RTOS_ready()) { return MUTEX_OK; }
-#if (ELOG_THREAD_SAFE == 1)
-  if (s_mutex_callbacks != NULL && s_mutex_callbacks->acquire != NULL && s_log_mutex != NULL)
-  {
-    return s_mutex_callbacks->acquire(s_log_mutex, timeout_ms);
-  }else if (s_log_mutex == NULL)
-  {
-    if (elog_mutex_create() == MUTEX_OK)
-    {
-      return s_mutex_callbacks->acquire(s_log_mutex, timeout_ms);
-    }
-  }
-#endif
-  return MUTEX_OK;
-}
-
-/**
- * @brief Give/unlock a mutex
- * @return Thread operation result
- */
-static mutex_result_t elog_mutex_give(void *mutex)
-{
-  if (!elog_is_RTOS_ready()) { return MUTEX_OK; }
-#if (ELOG_THREAD_SAFE == 1)
-  if (s_mutex_callbacks && s_mutex_callbacks->release)
-  {
-    return s_mutex_callbacks->release(mutex);
-  }
-#endif
-  return MUTEX_OK;
-
-}
-
-/**
- * @brief Delete a mutex
- * @return Thread operation result
- */
-static mutex_result_t elog_mutex_delete(void *mutex)
-{
-#if (ELOG_THREAD_SAFE == 1)
-  if (s_mutex_callbacks && s_mutex_callbacks->destroy)
-  {
-    return s_mutex_callbacks->destroy(mutex);
-  }
-#endif
-  return MUTEX_OK;
-}
-
-#if (ELOG_THREAD_SAFE == 1)
-/**
- * @brief Register mutex callback functions with eLog
- * @param callbacks: Pointer to callback structure (NULL to disable thread safety)
- * @return true on success, false if already initialized
- */
-bool elog_register_mutex_callbacks(const mutex_callbacks_t *callbacks)
-{
-  if (s_mutex_initialized) {
-    return false;  /* Cannot change callbacks after init */
-  }
-  
-  s_mutex_callbacks = (mutex_callbacks_t *)callbacks;
-  return true;
-}
-
-#endif
-
-/**
- * @brief Update the RTOS_READY flag
- * @param ready: Boolean value indicating if RTOS is ready (1) or not (0)
- */
-void elog_update_RTOS_ready(bool ready)
-{
-#if (ELOG_THREAD_SAFE == 1)
-/* Initialize mutex for thread safety */
-// if (!s_mutex_initialized)
-// {
-//   if (elog_mutex_create() == MUTEX_OK)
-//   {
-//     s_mutex_initialized = 1;
-//   }
-// }
-
-/* Update RTOS_READY flag */
-RTOS_READY = ready;
-#else
-  (void)ready; // No RTOS, no action needed
-#endif
-
-}
-
-/**
  * @brief Thread-safe version of log_message
  * @param level: Severity level of the message
  * @param fmt: Printf-style format string
@@ -286,10 +155,19 @@ void elog_message(elog_module_t module, elog_level_t level, const char *fmt, ...
     return; // Skip log if below module threshold
   }
 
-  /* If RTOS was ready then take mutex with timeout */
-  if (elog_mutex_take(ELOG_MUTEX_TIMEOUT_MS) != MUTEX_OK)
-  {
-    return; /* Skip logging if can't get mutex */
+  /* Try to acquire mutex if RTOS is ready and mutex exists */
+  bool took_mutex = false;
+  if (utilities_is_RTOS_ready()) {
+    // Lazy create mutex on first use
+    if (s_log_mutex == NULL) {
+      s_log_mutex = utilities_mutex_create();
+    }
+    // Try to take mutex if it was successfully created
+    if (s_log_mutex != NULL) {
+      if (utilities_mutex_take(s_log_mutex, ELOG_MUTEX_TIMEOUT_MS) == MUTEX_OK) {
+        took_mutex = true;
+      }
+    }
   }
 
   va_list args;
@@ -309,8 +187,10 @@ void elog_message(elog_module_t module, elog_level_t level, const char *fmt, ...
     }
   }
 
-  /* Give mutex */
-  if (elog_is_RTOS_ready()) elog_mutex_give(s_log_mutex);
+  /* Give mutex only if we took it */
+  if (took_mutex) {
+    utilities_mutex_give(s_log_mutex);
+  }
 }
 
 /**
@@ -330,10 +210,19 @@ void elog_message_with_location(elog_module_t module, elog_level_t level, const 
     return; // Skip log if below module threshold
   }
 
-  /* If RTOS was ready then take mutex with timeout */
-  if (elog_mutex_take(ELOG_MUTEX_TIMEOUT_MS) != MUTEX_OK)
-  {
-    return; /* Skip logging if can't get mutex */
+  /* Try to acquire mutex if RTOS is ready and mutex exists */
+  bool took_mutex = false;
+  if (utilities_is_RTOS_ready()) {
+    // Lazy create mutex on first use
+    if (s_log_mutex == NULL) {
+      s_log_mutex = utilities_mutex_create();
+    }
+    // Try to take mutex if it was successfully created
+    if (s_log_mutex != NULL) {
+      if (utilities_mutex_take(s_log_mutex, ELOG_MUTEX_TIMEOUT_MS) == MUTEX_OK) {
+        took_mutex = true;
+      }
+    }
   }
 
   va_list args;
@@ -361,8 +250,10 @@ void elog_message_with_location(elog_module_t module, elog_level_t level, const 
     }
   }
 
-  /* Give mutex */
-  elog_mutex_give(s_log_mutex);
+  /* Give mutex only if we took it */
+  if (took_mutex) {
+    utilities_mutex_give(s_log_mutex);
+  }
 }
 
 /**
@@ -373,10 +264,19 @@ void elog_message_with_location(elog_module_t module, elog_level_t level, const 
  */
 elog_err_t elog_subscribe(log_subscriber_t fn, elog_level_t threshold)
 {
-  /* If RTOS was ready then take mutex with timeout */
-  if (elog_mutex_take(ELOG_MUTEX_TIMEOUT_MS) != MUTEX_OK)
-  {
-    return ELOG_ERR_SUBSCRIBERS_EXCEEDED; /* Return error if can't get mutex */
+  /* Try to acquire mutex if RTOS is ready and mutex exists */
+  bool took_mutex = false;
+  if (utilities_is_RTOS_ready()) {
+    // Lazy create mutex on first use
+    if (s_log_mutex == NULL) {
+      s_log_mutex = utilities_mutex_create();
+    }
+    // Try to take mutex if it was successfully created
+    if (s_log_mutex != NULL) {
+      if (utilities_mutex_take(s_log_mutex, ELOG_MUTEX_TIMEOUT_MS) == MUTEX_OK) {
+        took_mutex = true;
+      }
+    }
   }
 
   elog_err_t result = ELOG_ERR_SUBSCRIBERS_EXCEEDED;
@@ -403,8 +303,10 @@ elog_err_t elog_subscribe(log_subscriber_t fn, elog_level_t threshold)
   }
 
 exit:
-  /* Give mutex */
-  elog_mutex_give(s_log_mutex);
+  /* Give mutex only if we took it */
+  if (took_mutex) {
+    utilities_mutex_give(s_log_mutex);
+  }
   return result;
 }
 
@@ -415,10 +317,19 @@ exit:
  */
 elog_err_t elog_unsubscribe(log_subscriber_t fn)
 {
-  /* If RTOS was ready then take mutex with timeout */
-  if (elog_mutex_take(ELOG_MUTEX_TIMEOUT_MS) != MUTEX_OK)
-  {
-    return ELOG_ERR_NOT_SUBSCRIBED; /* Return error if can't get mutex */
+  /* Try to acquire mutex if RTOS is ready and mutex exists */
+  bool took_mutex = false;
+  if (utilities_is_RTOS_ready()) {
+    // Lazy create mutex on first use
+    if (s_log_mutex == NULL) {
+      s_log_mutex = utilities_mutex_create();
+    }
+    // Try to take mutex if it was successfully created
+    if (s_log_mutex != NULL) {
+      if (utilities_mutex_take(s_log_mutex, ELOG_MUTEX_TIMEOUT_MS) == MUTEX_OK) {
+        took_mutex = true;
+      }
+    }
   }
 
   elog_err_t result = ELOG_ERR_NOT_SUBSCRIBED;
@@ -432,8 +343,10 @@ elog_err_t elog_unsubscribe(log_subscriber_t fn)
     }
   }
 
-  /* Give mutex */
-  elog_mutex_give(s_log_mutex);
+  /* Give mutex only if we took it */
+  if (took_mutex) {
+    utilities_mutex_give(s_log_mutex);
+  }
   return result;
 }
 

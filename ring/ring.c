@@ -14,95 +14,76 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdlib.h>
+#include "mutex_common.h"
 
-static volatile mutex_callbacks_t *s_cs_callbacks = NULL;
-#define MUTEX_TIMEOUT_MS 500
-
-/* ========================================================================== */
-/* Platform-specific critical section helpers                                 */
-/* ========================================================================== */
-
-__attribute__((always_inline)) static inline uint32_t __read_PRIMASK_inline(void)
+/***********************************************************
+ * @brief  Platform specific critical section macros
+************************************************************/
+__attribute__((always_inline)) static inline uint32_t __get_PRIMASK(void)
 {
   uint32_t result;
   __asm volatile ("MRS %0, primask" : "=r" (result) );
-  return result;
+  /*Disable interrupts */
+  __asm volatile ("cpsid i" : : : "memory"); 
+  return(result);
 }
 
-__attribute__((always_inline)) static inline uint32_t __disable_irq_and_get_primask(void)
+// Read PRIMASK without modifying it (safe for ISR context)
+__attribute__((always_inline)) static inline uint32_t __read_PRIMASK_safe(void)
 {
-  uint32_t result = __read_PRIMASK_inline();
-  __asm volatile ("cpsid i" : : : "memory");
-  return result;
+  uint32_t result;
+  __asm volatile ("MRS %0, primask" : "=r" (result) );
+  return(result);
 }
 
-__attribute__((always_inline)) static inline void __set_PRIMASK_inline(uint32_t priMask)
+__attribute__((always_inline)) static inline void __set_PRIMASK(uint32_t priMask)
 {
   __asm volatile ("MSR primask, %0" : : "r" (priMask) : "memory");
 }
 
-__attribute__((always_inline)) static inline bool __is_isr_context(void)
+// Check if we're in ISR context (xPSR.ISR field non-zero)
+__attribute__((always_inline)) static inline uint32_t __is_isr_context(void)
 {
-  uint32_t ipsr;
-  __asm volatile ("MRS %0, ipsr" : "=r" (ipsr) );
-  return (ipsr != 0U);
+  uint32_t xpsr;
+  __asm volatile ("MRS %0, xpsr" : "=r" (xpsr) );
+  return (xpsr & 0xFF);  // ISR is in bits [8:0] (up to 256 interrupts)
 }
 
 /***********************************************************/
-/* NEW: ISR-safe critical section implementation.
- * - Never calls RTOS mutex callbacks from ISR context.
- * - Always masks interrupts around ring mutations so ISR/task can't race.
- * - Uses a flag to only release the mutex if it was actually acquired.
- */
-void enter_cs(ring_t *rb, uint32_t timeout_ms)
-{
-  if (rb == NULL) { return; }
 
-  rb->cs_used_mutex = false;
+void enter_cs(ring_t *r){
+  if (r == NULL) return;
 
-  const bool is_isr = __is_isr_context();
-
-  if (!is_isr && (s_cs_callbacks != NULL))
-  {
-    if (rb->mutex == NULL)
-    {
-      rb->mutex = s_cs_callbacks->create ? s_cs_callbacks->create() : NULL;
+  if (utilities_is_RTOS_ready()){
+    // Lazy-create mutex on first use if not already created
+    if (r->mutex == NULL) {
+      r->mutex = utilities_mutex_create();
     }
-
-    if ((rb->mutex != NULL) && s_cs_callbacks->acquire)
-    {
-      if (s_cs_callbacks->acquire(rb->mutex, timeout_ms) == MUTEX_OK)
-      {
-        rb->cs_used_mutex = true;
+    
+    // If we now have a valid mutex, try to acquire it
+    if (r->mutex != NULL) {
+      mutex_result_t result = utilities_mutex_take(r->mutex, MUTEX_TIMEOUT_MS);
+      if (result == MUTEX_OK) {
+        return;
       }
+      // If mutex_take failed, fall through to interrupt disable as fallback
     }
+    // If mutex NULL or take failed, fall through to interrupt disable
   }
-
-  rb->primask_bit = __disable_irq_and_get_primask();
+  
+  // Fallback: Disable interrupts if RTOS not ready, ISR context, mutex creation failed, or take failed
+  r->primask_bit = __get_PRIMASK();  // Read and disable
 }
 
-void exit_cs(ring_t *rb)
-{
-  if (rb == NULL) { return; }
+void exit_cs(ring_t *r){
+  if (r == NULL) return;
 
-  __set_PRIMASK_inline(rb->primask_bit);
-
-  if (rb->cs_used_mutex && !__is_isr_context() && (s_cs_callbacks != NULL) && (rb->mutex != NULL) && s_cs_callbacks->release)
-  {
-    (void)s_cs_callbacks->release(rb->mutex);
+  if (r->mutex != NULL) {
+    utilities_mutex_give(r->mutex);
+    return;
   }
-  rb->cs_used_mutex = false;
-}
-
-/**
- * @brief Register critical section callbacks with ring buffer
- * @param callbacks: Pointer to callback structure (NULL for no synchronization)
- * @return true on success
- */
-bool ring_register_cs_callbacks(const mutex_callbacks_t *callbacks)
-{
-  s_cs_callbacks = (mutex_callbacks_t *)callbacks;
-  return true;
+  // Restore interrupt state first, then release mutex if used.
+  __set_PRIMASK(r->primask_bit);
 }
 
 
@@ -115,9 +96,10 @@ void ring_init(ring_t *rb, void *buffer, uint32_t size, size_t element_size) {
   rb->count = 0;          // Initialize count to 0 (empty)
   rb->element_size = element_size;
   rb->owns_buffer = false;  // External buffer, not owned by ring buffer
-  rb->primask_bit = 0;
+  // Mutex will be created lazily on first use in enter_cs()
+  // This allows ring to be initialized before RTOS is ready
   rb->mutex = NULL;
-  rb->cs_used_mutex = false;
+  rb->primask_bit = 0;    // Initialize saved interrupt state
 }
 
 // Initialize the ring buffer with dynamic allocation
@@ -146,15 +128,14 @@ bool ring_init_dynamic(ring_t *rb, uint32_t size, size_t element_size) {
   rb->count = 0;          // Initialize count to 0 (empty)
   rb->element_size = element_size;
   rb->owns_buffer = true;  // We own this buffer and will free it
+  // Mutex will be created lazily on first use in enter_cs()
+  // This allows ring to be initialized before RTOS is ready
   rb->mutex = NULL;
-  rb->primask_bit = 0;
-  rb->cs_used_mutex = false;
-  
+  rb->primask_bit = 0;    // Initialize saved interrupt state
 #ifdef ESP_IDF_VERSION
   ESP_LOGI(TAG, "Dynamically allocated ring buffer: %u elements × %zu bytes = %zu bytes total", 
            size, element_size, total_size);
 #endif
-  
   return true;
 }
 
@@ -181,10 +162,9 @@ void ring_destroy(ring_t *rb) {
   rb->count = 0;
   rb->element_size = 0;
   rb->owns_buffer = false;
-  rb->primask_bit = 0;
   // Destroy the mutex if it exists
-  if (rb->mutex && s_cs_callbacks && s_cs_callbacks->destroy) {
-    s_cs_callbacks->destroy(rb->mutex);
+  if (rb->mutex != NULL){
+    utilities_mutex_delete(rb->mutex);
   }
   rb->mutex = NULL;
 }
@@ -198,7 +178,7 @@ bool ring_is_owns_buffer(const ring_t *rb) {
 }
 
 void ring_clear(ring_t *rb) {
-  enter_cs(rb, MUTEX_TIMEOUT_MS);
+  enter_cs(rb);
   rb->head = 0;
   rb->tail = 0;
   rb->count = 0;
@@ -214,7 +194,8 @@ bool ring_is_full(const ring_t *rb) { return rb->count == rb->size; }
 // Write an element to the ring buffer
 bool ring_write(ring_t *rb, const void *data) {
   if (rb == NULL || data == NULL) { return false; }
-  enter_cs(rb, MUTEX_TIMEOUT_MS);
+  enter_cs(rb);
+
   if (ring_is_full(rb)) {
     exit_cs(rb);
     return false;
@@ -232,7 +213,7 @@ bool ring_write(ring_t *rb, const void *data) {
 // Write an element to the ring buffer (overwrites oldest data if full)
 bool ring_push_front(ring_t *rb, const void *data) {
   if (rb == NULL) { return false; }
-  enter_cs(rb, MUTEX_TIMEOUT_MS);
+  enter_cs(rb);
 
   bool was_full = ring_is_full(rb);
   
@@ -258,7 +239,7 @@ bool ring_push_front(ring_t *rb, const void *data) {
 uint32_t ring_push_back(ring_t *rb, const void *data, uint32_t count) {
   if (rb == NULL || data == NULL || count == 0) { return 0; }
 
-  enter_cs(rb, MUTEX_TIMEOUT_MS);
+  enter_cs(rb);
 
   uint32_t head = rb->head;
   uint32_t tail = rb->tail;
@@ -290,10 +271,14 @@ uint32_t ring_push_back(ring_t *rb, const void *data, uint32_t count) {
 
 // Read an element from the ring buffer
 bool ring_read(ring_t *rb, void *data) {
-  enter_cs(rb, MUTEX_TIMEOUT_MS);
-  if (rb == NULL || data == NULL || ring_is_empty(rb)) {
+  if (rb == NULL || data == NULL) {
+    return false;
+  }
+
+  enter_cs(rb);
+  if (ring_is_empty(rb)) {
     exit_cs(rb);
-    return false; // Buffer empty/invalid, read fails
+    return false; // Buffer empty and ring type is static, read fails
   }
 
   // Calculate the offset and copy the data
@@ -301,7 +286,7 @@ bool ring_read(ring_t *rb, void *data) {
   memcpy(data, src, rb->element_size);
   rb->tail = (rb->tail + 1) % rb->size; // Increment tail with wrap-around
   rb->count--;                          // Decrement count
-  exit_cs(rb);
+  exit_cs(rb); 
   return true;
 }
 
@@ -339,7 +324,7 @@ uint32_t ring_get_free(const ring_t *rb) {
 uint32_t ring_write_multiple(ring_t *rb, const void *data, uint32_t count) {
   if (rb == NULL || data == NULL || count == 0) { return 0; }
 
-  enter_cs(rb, MUTEX_TIMEOUT_MS);
+  enter_cs(rb);
   uint32_t free_slots = ring_get_free(rb);
   uint32_t elements_to_write = (count > free_slots) ? free_slots : count;
 
@@ -373,7 +358,7 @@ uint32_t ring_write_multiple(ring_t *rb, const void *data, uint32_t count) {
 uint32_t ring_read_multiple(ring_t *rb, void *data, uint32_t count) {
   if (rb == NULL || data == NULL || count == 0) { return 0; }
 
-  enter_cs(rb, MUTEX_TIMEOUT_MS);
+  enter_cs(rb);
 
   uint32_t available = ring_available(rb);
   uint32_t elements_to_read = (count > available) ? available : count;
@@ -411,7 +396,7 @@ bool ring_pop_back(ring_t *rb) {
   }
 
   // Atomic decrement of head and count
-  enter_cs(rb, MUTEX_TIMEOUT_MS);
+  enter_cs(rb);
   rb->head = (rb->head == 0) ? (rb->size - 1) : (rb->head - 1);
   rb->count--;
   exit_cs(rb);
@@ -422,7 +407,7 @@ bool ring_pop_back(ring_t *rb) {
 uint32_t ring_pop_back_multiple(ring_t *rb, uint32_t count) {
   if (rb == NULL || count == 0 || ring_is_empty(rb)) { return 0; }
 
-  enter_cs(rb, MUTEX_TIMEOUT_MS);
+  enter_cs(rb);
 
   // Limit count to available elements
   uint32_t available = ring_available(rb);
@@ -447,7 +432,7 @@ bool RingBuffer_PopFront(ring_t *rb) {
   }
 
   // Atomic increment of tail and decrement count
-  enter_cs(rb, MUTEX_TIMEOUT_MS);
+  enter_cs(rb);
   rb->tail = (rb->tail + 1) % rb->size;
   rb->count--;
   exit_cs(rb);
@@ -458,7 +443,7 @@ bool RingBuffer_PopFront(ring_t *rb) {
 uint32_t RingBuffer_PopFrontMultiple(ring_t *rb, uint32_t count) {
   if (rb == NULL || count == 0 || ring_is_empty(rb)) { return 0; }
   
-  enter_cs(rb, MUTEX_TIMEOUT_MS);
+  enter_cs(rb);
 
   // Limit count to available elements
   uint32_t available = ring_available(rb);
@@ -528,8 +513,8 @@ uint32_t ring_dump(ring_t *src_rb, ring_t *dst_rb, bool preserve_source) {
   // Check element size compatibility
   if (src_rb->element_size != dst_rb->element_size) { return 0; }
 
-  enter_cs(src_rb, MUTEX_TIMEOUT_MS);
-  enter_cs(dst_rb, MUTEX_TIMEOUT_MS);
+  enter_cs(src_rb);
+  enter_cs(dst_rb);
 
   // Get available elements in source and free space in destination
   uint32_t src_available = ring_available(src_rb);
@@ -604,8 +589,8 @@ uint32_t ring_dump_count(ring_t *src_rb, ring_t *dst_rb, uint32_t max_count, boo
   // Check element size compatibility
   if (src_rb->element_size != dst_rb->element_size) { return 0; }
 
-  enter_cs(src_rb, MUTEX_TIMEOUT_MS);
-  enter_cs(dst_rb, MUTEX_TIMEOUT_MS);
+  enter_cs(src_rb);
+  enter_cs(dst_rb);
   
 
   // Get available elements in source and free space in destination
