@@ -19,6 +19,15 @@
 #include "mutex_common.h"
 
 /* ========================================================================== */
+/* Running number */
+static volatile uint32_t s_log_runing_number = 0;
+
+static uint32_t get_runing_nbr(void)
+{
+  return ++s_log_runing_number;
+}
+
+/* ========================================================================== */
 /* Enhanced Logging Internal State */
 /* ========================================================================== */
 
@@ -147,15 +156,15 @@ void elog_console_subscriber(elog_level_t level, const char *msg)
 
   if (level >= ELOG_LEVEL_TRACE && level <= ELOG_LEVEL_ALWAYS)
   {
-    printf("%s%s: %s%s\n", colors[level], elog_level_name(level), msg, LOG_RESET_COLOR);
+    printf("%s%5lu>%s: %s%s\n", colors[level], get_runing_nbr(), elog_level_name(level), msg, LOG_RESET_COLOR);
   }
   else
   {
-    printf("%s: %s\n", elog_level_name(level), msg);
+    printf("%5lu>%s: %s\n", get_runing_nbr(), elog_level_name(level), msg);
   }
 #else
   /* No color version */
-  printf("%s: %s\n", elog_level_name(level), msg);
+  printf("%5lu>%s: %s\n", get_runing_nbr(), elog_level_name(level), msg);
 #endif
 }
 
