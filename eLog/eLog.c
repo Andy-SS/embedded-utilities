@@ -72,6 +72,30 @@ void elog_init(void)
   }
 }
 
+static bool inline elog_enter_cs(void){
+  if (utilities_is_RTOS_ready()) {
+    // Try to take mutex if it was successfully created
+    if (s_log_mutex != NULL) {
+      if (utilities_mutex_take(s_log_mutex, ELOG_MUTEX_TIMEOUT_MS) == MUTEX_OK) {
+        return true;
+      }
+    }
+
+    // Lazy create mutex on first use
+    if (s_log_mutex == NULL) {
+      s_log_mutex = utilities_mutex_create();
+    }
+  }
+  return false;
+}
+
+static void inline elog_exit_cs(bool took_mutex){
+  if (took_mutex) {
+    utilities_mutex_give(s_log_mutex);
+  }
+}
+
+
 /**
  * @brief Get human-readable name for log level
  * @param level: Log level
@@ -154,18 +178,7 @@ void elog_message(elog_module_t module, elog_level_t level, const char *fmt, ...
 
   /* Try to acquire mutex if RTOS is ready and mutex exists */
   bool took_mutex = false;
-  if (utilities_is_RTOS_ready()) {
-    // Lazy create mutex on first use
-    if (s_log_mutex == NULL) {
-      s_log_mutex = utilities_mutex_create();
-    }
-    // Try to take mutex if it was successfully created
-    if (s_log_mutex != NULL) {
-      if (utilities_mutex_take(s_log_mutex, ELOG_MUTEX_TIMEOUT_MS) == MUTEX_OK) {
-        took_mutex = true;
-      }
-    }
-  }
+  took_mutex = elog_enter_cs();
 
   va_list args;
 
@@ -185,9 +198,7 @@ void elog_message(elog_module_t module, elog_level_t level, const char *fmt, ...
   }
 
   /* Give mutex only if we took it */
-  if (took_mutex) {
-    utilities_mutex_give(s_log_mutex);
-  }
+  elog_exit_cs(took_mutex);
 }
 
 /**
@@ -209,18 +220,7 @@ void elog_message_with_location(elog_module_t module, elog_level_t level, const 
 
   /* Try to acquire mutex if RTOS is ready and mutex exists */
   bool took_mutex = false;
-  if (utilities_is_RTOS_ready()) {
-    // Lazy create mutex on first use
-    if (s_log_mutex == NULL) {
-      s_log_mutex = utilities_mutex_create();
-    }
-    // Try to take mutex if it was successfully created
-    if (s_log_mutex != NULL) {
-      if (utilities_mutex_take(s_log_mutex, ELOG_MUTEX_TIMEOUT_MS) == MUTEX_OK) {
-        took_mutex = true;
-      }
-    }
-  }
+  took_mutex = elog_enter_cs();
 
   va_list args;
   char temp_buffer[ELOG_MAX_MESSAGE_LENGTH - ELOG_MAX_LOCATION_LENGTH]; /* Reserve space for location info */
@@ -248,9 +248,7 @@ void elog_message_with_location(elog_module_t module, elog_level_t level, const 
   }
 
   /* Give mutex only if we took it */
-  if (took_mutex) {
-    utilities_mutex_give(s_log_mutex);
-  }
+  elog_exit_cs(took_mutex);
 }
 
 /**
@@ -263,18 +261,7 @@ elog_err_t elog_subscribe(log_subscriber_t fn, elog_level_t threshold)
 {
   /* Try to acquire mutex if RTOS is ready and mutex exists */
   bool took_mutex = false;
-  if (utilities_is_RTOS_ready()) {
-    // Lazy create mutex on first use
-    if (s_log_mutex == NULL) {
-      s_log_mutex = utilities_mutex_create();
-    }
-    // Try to take mutex if it was successfully created
-    if (s_log_mutex != NULL) {
-      if (utilities_mutex_take(s_log_mutex, ELOG_MUTEX_TIMEOUT_MS) == MUTEX_OK) {
-        took_mutex = true;
-      }
-    }
-  }
+  took_mutex = elog_enter_cs();
 
   elog_err_t result = ELOG_ERR_SUBSCRIBERS_EXCEEDED;
 
@@ -301,9 +288,7 @@ elog_err_t elog_subscribe(log_subscriber_t fn, elog_level_t threshold)
 
 exit:
   /* Give mutex only if we took it */
-  if (took_mutex) {
-    utilities_mutex_give(s_log_mutex);
-  }
+  elog_exit_cs(took_mutex);
   return result;
 }
 
@@ -316,18 +301,7 @@ elog_err_t elog_unsubscribe(log_subscriber_t fn)
 {
   /* Try to acquire mutex if RTOS is ready and mutex exists */
   bool took_mutex = false;
-  if (utilities_is_RTOS_ready()) {
-    // Lazy create mutex on first use
-    if (s_log_mutex == NULL) {
-      s_log_mutex = utilities_mutex_create();
-    }
-    // Try to take mutex if it was successfully created
-    if (s_log_mutex != NULL) {
-      if (utilities_mutex_take(s_log_mutex, ELOG_MUTEX_TIMEOUT_MS) == MUTEX_OK) {
-        took_mutex = true;
-      }
-    }
-  }
+  took_mutex = elog_enter_cs();
 
   elog_err_t result = ELOG_ERR_NOT_SUBSCRIBED;
 
@@ -341,9 +315,7 @@ elog_err_t elog_unsubscribe(log_subscriber_t fn)
   }
 
   /* Give mutex only if we took it */
-  if (took_mutex) {
-    utilities_mutex_give(s_log_mutex);
-  }
+  elog_exit_cs(took_mutex);
   return result;
 }
 

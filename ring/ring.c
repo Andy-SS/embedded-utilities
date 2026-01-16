@@ -51,7 +51,7 @@ __attribute__((always_inline)) static inline uint32_t __is_isr_context(void)
 
 /***********************************************************/
 
-void enter_cs(ring_t *r){
+static void ring_enter_cs(ring_t *r){
   if (r == NULL) return;
 
   if (utilities_is_RTOS_ready()){
@@ -75,7 +75,7 @@ void enter_cs(ring_t *r){
   r->primask_bit = __get_PRIMASK();  // Read and disable
 }
 
-void exit_cs(ring_t *r){
+static void ring_exit_cs(ring_t *r){
   if (r == NULL) return;
 
   if (r->mutex != NULL) {
@@ -96,7 +96,7 @@ void ring_init(ring_t *rb, void *buffer, uint32_t size, size_t element_size) {
   rb->count = 0;          // Initialize count to 0 (empty)
   rb->element_size = element_size;
   rb->owns_buffer = false;  // External buffer, not owned by ring buffer
-  // Mutex will be created lazily on first use in enter_cs()
+  // Mutex will be created lazily on first use in ring_enter_cs()
   // This allows ring to be initialized before RTOS is ready
   rb->mutex = NULL;
   rb->primask_bit = 0;    // Initialize saved interrupt state
@@ -128,7 +128,7 @@ bool ring_init_dynamic(ring_t *rb, uint32_t size, size_t element_size) {
   rb->count = 0;          // Initialize count to 0 (empty)
   rb->element_size = element_size;
   rb->owns_buffer = true;  // We own this buffer and will free it
-  // Mutex will be created lazily on first use in enter_cs()
+  // Mutex will be created lazily on first use in ring_enter_cs()
   // This allows ring to be initialized before RTOS is ready
   rb->mutex = NULL;
   rb->primask_bit = 0;    // Initialize saved interrupt state
@@ -178,11 +178,11 @@ bool ring_is_owns_buffer(const ring_t *rb) {
 }
 
 void ring_clear(ring_t *rb) {
-  enter_cs(rb);
+  ring_enter_cs(rb);
   rb->head = 0;
   rb->tail = 0;
   rb->count = 0;
-  exit_cs(rb);
+  ring_exit_cs(rb);
 }
 
 // Check if the ring buffer is empty
@@ -194,10 +194,10 @@ bool ring_is_full(const ring_t *rb) { return rb->count == rb->size; }
 // Write an element to the ring buffer
 bool ring_write(ring_t *rb, const void *data) {
   if (rb == NULL || data == NULL) { return false; }
-  enter_cs(rb);
+  ring_enter_cs(rb);
 
   if (ring_is_full(rb)) {
-    exit_cs(rb);
+    ring_exit_cs(rb);
     return false;
   }
 
@@ -206,14 +206,14 @@ bool ring_write(ring_t *rb, const void *data) {
   memcpy(dest, data, rb->element_size);
   rb->head = (rb->head + 1) % rb->size; // Increment head with wrap-around
   rb->count++;                          // Increment count
-  exit_cs(rb);
+  ring_exit_cs(rb);
   return true;
 }
 
 // Write an element to the ring buffer (overwrites oldest data if full)
 bool ring_push_front(ring_t *rb, const void *data) {
   if (rb == NULL) { return false; }
-  enter_cs(rb);
+  ring_enter_cs(rb);
 
   bool was_full = ring_is_full(rb);
   
@@ -231,7 +231,7 @@ bool ring_push_front(ring_t *rb, const void *data) {
     // Buffer wasn't full, increment count
     rb->count++;
   }
-  exit_cs(rb);
+  ring_exit_cs(rb);
   return true;
 }
 
@@ -239,7 +239,7 @@ bool ring_push_front(ring_t *rb, const void *data) {
 uint32_t ring_push_back(ring_t *rb, const void *data, uint32_t count) {
   if (rb == NULL || data == NULL || count == 0) { return 0; }
 
-  enter_cs(rb);
+  ring_enter_cs(rb);
 
   uint32_t head = rb->head;
   uint32_t tail = rb->tail;
@@ -265,7 +265,7 @@ uint32_t ring_push_back(ring_t *rb, const void *data, uint32_t count) {
   rb->head = head;
   rb->tail = tail;
   rb->count = current_count;
-  exit_cs(rb);
+  ring_exit_cs(rb);
   return elements_to_write;
 }
 
@@ -275,9 +275,9 @@ bool ring_read(ring_t *rb, void *data) {
     return false;
   }
 
-  enter_cs(rb);
+  ring_enter_cs(rb);
   if (ring_is_empty(rb)) {
-    exit_cs(rb);
+    ring_exit_cs(rb);
     return false; // Buffer empty and ring type is static, read fails
   }
 
@@ -286,7 +286,7 @@ bool ring_read(ring_t *rb, void *data) {
   memcpy(data, src, rb->element_size);
   rb->tail = (rb->tail + 1) % rb->size; // Increment tail with wrap-around
   rb->count--;                          // Decrement count
-  exit_cs(rb); 
+  ring_exit_cs(rb); 
   return true;
 }
 
@@ -324,12 +324,12 @@ uint32_t ring_get_free(const ring_t *rb) {
 uint32_t ring_write_multiple(ring_t *rb, const void *data, uint32_t count) {
   if (rb == NULL || data == NULL || count == 0) { return 0; }
 
-  enter_cs(rb);
+  ring_enter_cs(rb);
   uint32_t free_slots = ring_get_free(rb);
   uint32_t elements_to_write = (count > free_slots) ? free_slots : count;
 
   if (elements_to_write == 0) { 
-    exit_cs(rb);
+    ring_exit_cs(rb);
     return 0; 
   }
 
@@ -350,7 +350,7 @@ uint32_t ring_write_multiple(ring_t *rb, const void *data, uint32_t count) {
   // Atomic update of head and count
   rb->head = (head + elements_to_write) % rb->size;
   rb->count += elements_to_write;
-  exit_cs(rb);
+  ring_exit_cs(rb);
   return elements_to_write;
 }
 
@@ -358,13 +358,13 @@ uint32_t ring_write_multiple(ring_t *rb, const void *data, uint32_t count) {
 uint32_t ring_read_multiple(ring_t *rb, void *data, uint32_t count) {
   if (rb == NULL || data == NULL || count == 0) { return 0; }
 
-  enter_cs(rb);
+  ring_enter_cs(rb);
 
   uint32_t available = ring_available(rb);
   uint32_t elements_to_read = (count > available) ? available : count;
 
   if (elements_to_read == 0) { 
-    exit_cs(rb);
+    ring_exit_cs(rb);
     return 0; 
   }
 
@@ -385,7 +385,7 @@ uint32_t ring_read_multiple(ring_t *rb, void *data, uint32_t count) {
   // Atomic update of tail and count
   rb->tail = (tail + elements_to_read) % rb->size;
   rb->count -= elements_to_read;
-  exit_cs(rb);
+  ring_exit_cs(rb);
   return elements_to_read;
 }
 
@@ -396,10 +396,10 @@ bool ring_pop_back(ring_t *rb) {
   }
 
   // Atomic decrement of head and count
-  enter_cs(rb);
+  ring_enter_cs(rb);
   rb->head = (rb->head == 0) ? (rb->size - 1) : (rb->head - 1);
   rb->count--;
-  exit_cs(rb);
+  ring_exit_cs(rb);
   return true;
 }
 
@@ -407,7 +407,7 @@ bool ring_pop_back(ring_t *rb) {
 uint32_t ring_pop_back_multiple(ring_t *rb, uint32_t count) {
   if (rb == NULL || count == 0 || ring_is_empty(rb)) { return 0; }
 
-  enter_cs(rb);
+  ring_enter_cs(rb);
 
   // Limit count to available elements
   uint32_t available = ring_available(rb);
@@ -421,7 +421,7 @@ uint32_t ring_pop_back_multiple(ring_t *rb, uint32_t count) {
   }
   rb->count -= elements_to_remove;
 
-  exit_cs(rb);
+  ring_exit_cs(rb);
   return elements_to_remove;
 }
 
@@ -432,10 +432,10 @@ bool RingBuffer_PopFront(ring_t *rb) {
   }
 
   // Atomic increment of tail and decrement count
-  enter_cs(rb);
+  ring_enter_cs(rb);
   rb->tail = (rb->tail + 1) % rb->size;
   rb->count--;
-  exit_cs(rb);
+  ring_exit_cs(rb);
   return true;
 }
 
@@ -443,7 +443,7 @@ bool RingBuffer_PopFront(ring_t *rb) {
 uint32_t RingBuffer_PopFrontMultiple(ring_t *rb, uint32_t count) {
   if (rb == NULL || count == 0 || ring_is_empty(rb)) { return 0; }
   
-  enter_cs(rb);
+  ring_enter_cs(rb);
 
   // Limit count to available elements
   uint32_t available = ring_available(rb);
@@ -452,7 +452,7 @@ uint32_t RingBuffer_PopFrontMultiple(ring_t *rb, uint32_t count) {
   // Atomic increment of tail and decrement count
   rb->tail = (rb->tail + elements_to_remove) % rb->size;
   rb->count -= elements_to_remove;
-  exit_cs(rb);
+  ring_exit_cs(rb);
   return elements_to_remove;
 }
 
@@ -513,8 +513,8 @@ uint32_t ring_dump(ring_t *src_rb, ring_t *dst_rb, bool preserve_source) {
   // Check element size compatibility
   if (src_rb->element_size != dst_rb->element_size) { return 0; }
 
-  enter_cs(src_rb);
-  enter_cs(dst_rb);
+  ring_enter_cs(src_rb);
+  ring_enter_cs(dst_rb);
 
   // Get available elements in source and free space in destination
   uint32_t src_available = ring_available(src_rb);
@@ -524,8 +524,8 @@ uint32_t ring_dump(ring_t *src_rb, ring_t *dst_rb, bool preserve_source) {
   
   // Source has no data to copy or destination is full
   if ((src_available == 0) ||(elements_to_copy == 0)) {
-    exit_cs(src_rb);
-    exit_cs(dst_rb);
+    ring_exit_cs(src_rb);
+    ring_exit_cs(dst_rb);
     return 0;  // Nothing to copy
   }
   
@@ -577,8 +577,8 @@ uint32_t ring_dump(ring_t *src_rb, ring_t *dst_rb, bool preserve_source) {
   } else {
     dst_rb->count = dst_rb->size;  // Clamp to maximum size
   }
-  exit_cs(src_rb);
-  exit_cs(dst_rb);
+  ring_exit_cs(src_rb);
+  ring_exit_cs(dst_rb);
   return copied_count;
 }
 
@@ -589,8 +589,8 @@ uint32_t ring_dump_count(ring_t *src_rb, ring_t *dst_rb, uint32_t max_count, boo
   // Check element size compatibility
   if (src_rb->element_size != dst_rb->element_size) { return 0; }
 
-  enter_cs(src_rb);
-  enter_cs(dst_rb);
+  ring_enter_cs(src_rb);
+  ring_enter_cs(dst_rb);
   
 
   // Get available elements in source and free space in destination
@@ -608,8 +608,8 @@ uint32_t ring_dump_count(ring_t *src_rb, ring_t *dst_rb, uint32_t max_count, boo
   
   // Source has no data to copy or destination is full
   if ((elements_to_copy == 0) || (src_available == 0)) {
-    exit_cs(src_rb);
-    exit_cs(dst_rb);
+    ring_exit_cs(src_rb);
+    ring_exit_cs(dst_rb);
     return 0;  // Nothing to copy or destination is full
   }
   
@@ -661,8 +661,8 @@ uint32_t ring_dump_count(ring_t *src_rb, ring_t *dst_rb, uint32_t max_count, boo
   } else {
     dst_rb->count = dst_rb->size;  // Clamp to maximum size
   }
-  exit_cs(src_rb);
-  exit_cs(dst_rb);
+  ring_exit_cs(src_rb);
+  ring_exit_cs(dst_rb);
   
   return copied_count;
 }
