@@ -16,15 +16,17 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdint.h>
 #include "mutex_common.h"
 
 /* ========================================================================== */
 /* Running number */
-static volatile uint32_t s_log_runing_number = 0;
+static volatile uint32_t s_log_runing_number[ELOG_MD_MAX] = {0};
 
-static uint32_t get_runing_nbr(void)
+static uint32_t get_runing_nbr(elog_module_t module)
 {
-  return ++s_log_runing_number;
+  // Atomically increment and return the running number for the module using GCC built-in atomic functions
+  return __atomic_add_fetch(&s_log_runing_number[module], 1, __ATOMIC_SEQ_CST);
 }
 
 /* ========================================================================== */
@@ -140,7 +142,7 @@ elog_level_t elog_get_auto_threshold(void) { return ELOG_DEFAULT_THRESHOLD; }
  * @param level: Severity level of the message
  * @param msg: Formatted message string
  */
-void elog_console_subscriber(elog_level_t level, const char *msg)
+void elog_console_subscriber(elog_module_t module, elog_level_t level, const char *msg)
 {
 #if ELOG_USE_COLOR
   /* Color codes for different log levels */
@@ -156,15 +158,15 @@ void elog_console_subscriber(elog_level_t level, const char *msg)
 
   if (level >= ELOG_LEVEL_TRACE && level <= ELOG_LEVEL_ALWAYS)
   {
-    printf("%s%5lu>%s: %s%s\n", colors[level], get_runing_nbr(), elog_level_name(level), msg, LOG_RESET_COLOR);
+    printf("%s%s:%u,%lu: %s%s\n", colors[level], elog_level_name(level),(uint8_t)module, get_runing_nbr(module), msg, LOG_RESET_COLOR);
   }
   else
   {
-    printf("%5lu>%s: %s\n", get_runing_nbr(), elog_level_name(level), msg);
+    printf("%s:%u,%lu: %s\n", colors[level], elog_level_name(level),(uint8_t)module, get_runing_nbr(module), msg);
   }
 #else
   /* No color version */
-  printf("%5lu>%s: %s\n", get_runing_nbr(), elog_level_name(level), msg);
+  printf("%s:%u,%lu: %s\n", elog_level_name(level),(uint8_t)module, get_runing_nbr(module), msg);
 #endif
 }
 
@@ -202,7 +204,7 @@ void elog_message(elog_module_t module, elog_level_t level, const char *fmt, ...
     if (level >= s_subscribers[i].threshold)
     {
       // printf("[DEBUG] Sending message to subscriber %d.\n", i);
-      s_subscribers[i].fn(level, s_message_buffer);
+      s_subscribers[i].fn(module, level, s_message_buffer);
     }
   }
 
@@ -252,7 +254,7 @@ void elog_message_with_location(elog_module_t module, elog_level_t level, const 
   {
     if (level >= s_subscribers[i].threshold)
     {
-      s_subscribers[i].fn(level, s_message_buffer);
+      s_subscribers[i].fn(module, level, s_message_buffer);
     }
   }
 

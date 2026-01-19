@@ -143,7 +143,7 @@ typedef enum {
  * @param level: Severity level of the message
  * @param msg: Formatted message string (temporary - copy if needed)
  */
-typedef void (*log_subscriber_t)(elog_level_t level, const char *msg);
+typedef void (*log_subscriber_t)(elog_module_t module, elog_level_t level, const char *msg);
 
 /**
  * @brief Unified Error Codes Enumeration
@@ -337,7 +337,7 @@ void elog_message_with_location(elog_module_t module, elog_level_t level, const 
 #define LOG_LEVEL_NAME(level) elog_level_name(level)
 
 /* Convenience setup macro with console subscriber */
-extern void elog_console_subscriber(elog_level_t level, const char *msg);
+extern void elog_console_subscriber(elog_module_t module, elog_level_t level, const char *msg);
 #define LOG_INIT_WITH_CONSOLE() do { \
     LOG_INIT(); \
     LOG_SUBSCRIBE(elog_console_subscriber, ELOG_DEFAULT_THRESHOLD); \
