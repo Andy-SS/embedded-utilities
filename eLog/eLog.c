@@ -21,12 +21,12 @@
 
 /* ========================================================================== */
 /* Running number */
-static volatile uint32_t s_log_runing_number[ELOG_MD_MAX] = {0};
+volatile uint32_t s_log_runing_number[ELOG_MD_MAX] = {0};
 
-static uint32_t get_runing_nbr(elog_module_t module)
+static uint32_t inline get_runing_nbr(elog_module_t module)
 {
-  // Atomically increment and return the running number for the module using GCC built-in atomic functions
-  return __atomic_add_fetch(&s_log_runing_number[module], 1, __ATOMIC_SEQ_CST);
+  // Simple increment - no atomic operations for now to diagnose issue
+  return ++s_log_runing_number[module];
 }
 
 /* ========================================================================== */
@@ -87,7 +87,7 @@ static bool inline elog_enter_cs(void){
   if (utilities_is_RTOS_ready()) {
     // Try to take mutex if it was successfully created
     if (s_log_mutex != NULL) {
-      if (utilities_mutex_take(s_log_mutex, ELOG_MUTEX_TIMEOUT_MS) == MUTEX_OK) {
+      if (utilities_mutex_take((void *)s_log_mutex, ELOG_MUTEX_TIMEOUT_MS) == MUTEX_OK) {
         return true;
       }
     }
@@ -102,7 +102,7 @@ static bool inline elog_enter_cs(void){
 
 static void inline elog_exit_cs(bool took_mutex){
   if (took_mutex) {
-    utilities_mutex_give(s_log_mutex);
+    utilities_mutex_give((void *)s_log_mutex);
   }
 }
 
@@ -162,7 +162,7 @@ void elog_console_subscriber(elog_module_t module, elog_level_t level, const cha
   }
   else
   {
-    printf("%s:%u,%lu: %s\n", colors[level], elog_level_name(level),(uint8_t)module, get_runing_nbr(module), msg);
+    printf("%s:%u,%lu: %s\n",elog_level_name(level),(uint8_t)module, get_runing_nbr(module), msg);
   }
 #else
   /* No color version */
