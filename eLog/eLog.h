@@ -85,7 +85,7 @@ static inline const char *debug_get_filename(const char *fullpath) {
 #define ELOG_DEBUG_ALWAYS_ON YES    /* Always logged messages (WHITE BOLD) */
 
 /* Filename Support Configuration */
-#define ENABLE_DEBUG_MESSAGES_WITH_MODULE 1
+#define ENABLE_DEBUG_MESSAGES_WITH_LOCATION 1
 
 /* Auto-calculate the lowest enabled log level for enhanced logging */
 #if (ELOG_DEBUG_TRACE_ON == YES)
@@ -113,7 +113,8 @@ static inline const char *debug_get_filename(const char *fullpath) {
 
 /* Maximum length of formatted log message */
 #ifndef ELOG_MAX_MESSAGE_LENGTH
-#define ELOG_MAX_MESSAGE_LENGTH 256
+#define ELOG_FULL_MESSAGE_LENGTH 256
+#define ELOG_MAX_MESSAGE_LENGTH 128
 #define ELOG_MAX_LOCATION_LENGTH 64
 #endif
 
@@ -130,8 +131,8 @@ static inline const char *debug_get_filename(const char *fullpath) {
  */
 typedef enum {
   ELOG_LEVEL_TRACE = 100,    /*!< Most verbose: function entry/exit, detailed flow */
-  ELOG_LEVEL_DEBUG,          /*!< Debug info: variable values, state changes */
   ELOG_LEVEL_INFO,           /*!< Informational: normal operation events */
+  ELOG_LEVEL_DEBUG,          /*!< Debug info: variable values, state changes */
   ELOG_LEVEL_WARNING,        /*!< Warnings: recoverable errors, performance issues */
   ELOG_LEVEL_ERROR,          /*!< Errors: serious problems that need attention */
   ELOG_LEVEL_CRITICAL,       /*!< Critical: system failure, unrecoverable errors */
@@ -139,11 +140,13 @@ typedef enum {
 } elog_level_t;
 
 /**
- * @brief Log subscriber function prototype
- * @param level: Severity level of the message
- * @param msg: Formatted message string (temporary - copy if needed)
+ * @brief Log subscriber function type
+ * @param handle: Unused
+ * @param buf: Message buffer
+ * @param len: Length of message
+ * @return Always 0
  */
-typedef void (*log_subscriber_t)(elog_module_t module, elog_level_t level, const char *msg);
+typedef int (*log_subscriber_t)(int handle, const char *buf, size_t len);
 
 /**
  * @brief Unified Error Codes Enumeration
@@ -305,14 +308,7 @@ elog_err_t elog_set_module_threshold(elog_module_t module, elog_level_t threshol
  */
 elog_level_t elog_get_module_threshold(elog_module_t module);
 
-/**
- * @brief Send a formatted message to all subscribers
- * @param level: Severity level of the message
- * @param fmt: Printf-style format string
- * @param ...: Format arguments
- */
-void elog_message(elog_module_t module, elog_level_t level, const char *fmt, ...);
-
+#if ENABLE_DEBUG_MESSAGES_WITH_LOCATION
 /**
  * @brief Send a formatted message with location info to all subscribers
  * @param level: Severity level of the message
@@ -323,10 +319,19 @@ void elog_message(elog_module_t module, elog_level_t level, const char *fmt, ...
  * @param ...: Format arguments
  */
 void elog_message_with_location(elog_module_t module, elog_level_t level, const char *file, const char *func, int line, const char *fmt, ...);
+#define LOG_MESSAGE_WITH_LOCATION(module, level, file, func, line, ...) elog_message_with_location(module, level, file, func, line, __VA_ARGS__)
+#else
+/**
+ * @brief Send a formatted message to all subscribers
+ * @param level: Severity level of the message
+ * @param fmt: Printf-style format string
+ * @param ...: Format arguments
+ */
+void elog_message(elog_module_t module, elog_level_t level, const char *fmt, ...);
+#define LOG_MESSAGE(module, level, ...) elog_message(module, level, __VA_ARGS__)
+#endif
 
 /* ========================================================================== */
-#define LOG_MESSAGE(module, level, ...) elog_message(module, level, __VA_ARGS__)
-#define LOG_MESSAGE_WITH_LOCATION(module, level, file, func, line, ...) elog_message_with_location(module, level, file, func, line, __VA_ARGS__)
 #define LOG_SUBSCRIBE_THREAD_SAFE(fn, level) elog_subscribe(fn, level)
 #define LOG_UNSUBSCRIBE_THREAD_SAFE(fn) elog_unsubscribe(fn)
 
@@ -337,7 +342,7 @@ void elog_message_with_location(elog_module_t module, elog_level_t level, const 
 #define LOG_LEVEL_NAME(level) elog_level_name(level)
 
 /* Convenience setup macro with console subscriber */
-extern void elog_console_subscriber(elog_module_t module, elog_level_t level, const char *msg);
+extern int elog_console_subscriber(int handle, const char *buf, size_t len);
 #define LOG_INIT_WITH_CONSOLE() do { \
     LOG_INIT(); \
     LOG_SUBSCRIBE(elog_console_subscriber, ELOG_DEFAULT_THRESHOLD); \
@@ -359,7 +364,7 @@ extern void elog_console_subscriber(elog_module_t module, elog_level_t level, co
 
 /* Individual level macros - follow same pattern as legacy debug macros */
 #if (ELOG_DEBUG_TRACE_ON == YES)
-#if ENABLE_DEBUG_MESSAGES_WITH_MODULE
+#if ENABLE_DEBUG_MESSAGES_WITH_LOCATION
 #define ELOG_TRACE(...) LOG_MESSAGE_WITH_LOCATION(ELOG_LEVEL_TRACE, debug_get_filename(__ASSERT_FILE_NAME), __func__, __LINE__, __VA_ARGS__)
 #define ELOG_TRACE_STR(str) LOG_MESSAGE_WITH_LOCATION(ELOG_LEVEL_TRACE, debug_get_filename(__ASSERT_FILE_NAME), __func__, __LINE__, "%s", str)
 #else
@@ -372,7 +377,7 @@ extern void elog_console_subscriber(elog_module_t module, elog_level_t level, co
 #endif
 
 #if (ELOG_DEBUG_LOG_ON == YES)
-#if ENABLE_DEBUG_MESSAGES_WITH_MODULE
+#if ENABLE_DEBUG_MESSAGES_WITH_LOCATION
 #define ELOG_DEBUG(module, ...) LOG_MESSAGE_WITH_LOCATION(module, ELOG_LEVEL_DEBUG, debug_get_filename(__ASSERT_FILE_NAME), __func__, __LINE__, __VA_ARGS__)
 #define ELOG_DEBUG_STR(module, str) LOG_MESSAGE_WITH_LOCATION(module, ELOG_LEVEL_DEBUG, debug_get_filename(__ASSERT_FILE_NAME), __func__, __LINE__, "%s", str)
 #else
@@ -385,7 +390,7 @@ extern void elog_console_subscriber(elog_module_t module, elog_level_t level, co
 #endif
 
 #if (ELOG_DEBUG_INFO_ON == YES)
-#if ENABLE_DEBUG_MESSAGES_WITH_MODULE
+#if ENABLE_DEBUG_MESSAGES_WITH_LOCATION
 #define ELOG_INFO(module, ...) LOG_MESSAGE_WITH_LOCATION(module, ELOG_LEVEL_INFO, debug_get_filename(__ASSERT_FILE_NAME), __func__, __LINE__, __VA_ARGS__)
 #define ELOG_INFO_STR(module, str) LOG_MESSAGE_WITH_LOCATION(module, ELOG_LEVEL_INFO, debug_get_filename(__ASSERT_FILE_NAME), __func__, __LINE__, "%s", str)
 #else
@@ -398,7 +403,7 @@ extern void elog_console_subscriber(elog_module_t module, elog_level_t level, co
 #endif
 
 #if (ELOG_DEBUG_WARN_ON == YES)
-#if ENABLE_DEBUG_MESSAGES_WITH_MODULE
+#if ENABLE_DEBUG_MESSAGES_WITH_LOCATION
 #define ELOG_WARNING(module, ...) LOG_MESSAGE_WITH_LOCATION(module, ELOG_LEVEL_WARNING, debug_get_filename(__ASSERT_FILE_NAME), __func__, __LINE__, __VA_ARGS__)
 #define ELOG_WARNING_STR(module, str) LOG_MESSAGE_WITH_LOCATION(module, ELOG_LEVEL_WARNING, debug_get_filename(__ASSERT_FILE_NAME), __func__, __LINE__, "%s", str)
 #else
@@ -411,7 +416,7 @@ extern void elog_console_subscriber(elog_module_t module, elog_level_t level, co
 #endif
 
 #if (ELOG_DEBUG_ERR_ON == YES)
-#if ENABLE_DEBUG_MESSAGES_WITH_MODULE
+#if ENABLE_DEBUG_MESSAGES_WITH_LOCATION
 #define ELOG_ERROR(module, ...) LOG_MESSAGE_WITH_LOCATION(module, ELOG_LEVEL_ERROR, debug_get_filename(__ASSERT_FILE_NAME), __func__, __LINE__, __VA_ARGS__)
 #define ELOG_ERROR_STR(module, str) LOG_MESSAGE_WITH_LOCATION(module, ELOG_LEVEL_ERROR, debug_get_filename(__ASSERT_FILE_NAME), __func__, __LINE__, "%s", str)
 #else
@@ -424,7 +429,7 @@ extern void elog_console_subscriber(elog_module_t module, elog_level_t level, co
 #endif
 
 #if (ELOG_DEBUG_CRITICAL_ON == YES)
-#if ENABLE_DEBUG_MESSAGES_WITH_MODULE
+#if ENABLE_DEBUG_MESSAGES_WITH_LOCATION
 #define ELOG_CRITICAL(module, ...) LOG_MESSAGE_WITH_LOCATION(module, ELOG_LEVEL_CRITICAL, debug_get_filename(__ASSERT_FILE_NAME), __func__, __LINE__, __VA_ARGS__)
 #define ELOG_CRITICAL_STR(module, str) LOG_MESSAGE_WITH_LOCATION(module, ELOG_LEVEL_CRITICAL, debug_get_filename(__ASSERT_FILE_NAME), __func__, __LINE__, "%s", str)
 #else
@@ -437,7 +442,7 @@ extern void elog_console_subscriber(elog_module_t module, elog_level_t level, co
 #endif
 
 #if (ELOG_DEBUG_ALWAYS_ON == YES)
-#if ENABLE_DEBUG_MESSAGES_WITH_MODULE
+#if ENABLE_DEBUG_MESSAGES_WITH_LOCATION
 #define ELOG_ALWAYS(module, ...) LOG_MESSAGE_WITH_LOCATION(module, ELOG_LEVEL_ALWAYS, debug_get_filename(__ASSERT_FILE_NAME), __func__, __LINE__, __VA_ARGS__)
 #define ELOG_ALWAYS_STR(module, str) LOG_MESSAGE_WITH_LOCATION(module, ELOG_LEVEL_ALWAYS, debug_get_filename(__ASSERT_FILE_NAME), __func__, __LINE__, "%s", str)
 #else

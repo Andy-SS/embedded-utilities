@@ -13,6 +13,10 @@ target_include_directories(common
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
+# Ensure LTO compatibility for static libraries - ONLY for Release builds
+target_compile_options(common PRIVATE $<$<CONFIG:Release>:-flto> $<$<CONFIG:Release>:-ffat-lto-objects>)
+target_link_options(common PRIVATE $<$<CONFIG:Release>:-flto>)
+
 # Add subdirectories for each utility
 add_subdirectory(eLog)
 add_subdirectory(ring)

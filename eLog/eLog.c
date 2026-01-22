@@ -47,7 +47,8 @@ static subscriber_entry_t s_subscribers[ELOG_MAX_SUBSCRIBERS];
 static int s_num_subscribers = 0;
 
 /* Static message buffer for formatting */
-static char s_message_buffer[ELOG_MAX_MESSAGE_LENGTH];
+static char s_fmt[ELOG_MAX_MESSAGE_LENGTH];
+static char s_full_message_buffer[ELOG_FULL_MESSAGE_LENGTH];
 
 /* Mutex for thread safety */
 static volatile void *s_log_mutex;
@@ -138,80 +139,24 @@ elog_level_t elog_get_auto_threshold(void) { return ELOG_DEFAULT_THRESHOLD; }
 /* ========================================================================== */
 
 /**
- * @brief Built-in console subscriber with color support
- * @param level: Severity level of the message
- * @param msg: Formatted message string
+ * @brief Built-in console log subscriber
+ * @param handle: Unused
+ * @param buf: Message buffer
+ * @param len: Length of message
+ * @return Always 0
  */
-void elog_console_subscriber(elog_module_t module, elog_level_t level, const char *msg)
+int elog_console_subscriber(int handle, const char *buf, size_t len)
 {
-#if ELOG_USE_COLOR
-  /* Color codes for different log levels */
-  const char *colors[] = {
-      [ELOG_LEVEL_TRACE] = LOG_COLOR(LOG_COLOR_BLUE),    /* Blue for trace */
-      [ELOG_LEVEL_DEBUG] = LOG_COLOR(LOG_COLOR_CYAN),    /* Cyan for debug */
-      [ELOG_LEVEL_INFO] = LOG_COLOR(LOG_COLOR_GREEN),    /* Green for info */
-      [ELOG_LEVEL_WARNING] = LOG_COLOR(LOG_COLOR_BROWN), /* Brown/Yellow for warning */
-      [ELOG_LEVEL_ERROR] = LOG_COLOR(LOG_COLOR_RED),     /* Red for error */
-      [ELOG_LEVEL_CRITICAL] = LOG_BOLD(LOG_COLOR_RED),   /* Bold Red for critical */
-      [ELOG_LEVEL_ALWAYS] = LOG_BOLD("37")               /* Bold White for always */
-  };
-
-  if (level >= ELOG_LEVEL_TRACE && level <= ELOG_LEVEL_ALWAYS)
-  {
-    printf("%s%s:%u,%lu: %s%s\n", colors[level], elog_level_name(level),(uint8_t)module, get_runing_nbr(module), msg, LOG_RESET_COLOR);
-  }
-  else
-  {
-    printf("%s:%u,%lu: %s\n",elog_level_name(level),(uint8_t)module, get_runing_nbr(module), msg);
-  }
-#else
-  /* No color version */
-  printf("%s:%u,%lu: %s\n", elog_level_name(level),(uint8_t)module, get_runing_nbr(module), msg);
-#endif
+  extern int LPUartQueueBuffWrite(int handle, const char *buf, size_t bufSize);
+  /* Redirect to UART Tx DMA */
+  return LPUartQueueBuffWrite(handle, buf, len);
 }
 
 /* ========================================================================== */
 /* Thread Safety Implementation */
 /* ========================================================================== */
 
-/**
- * @brief Thread-safe version of log_message
- * @param level: Severity level of the message
- * @param fmt: Printf-style format string
- * @param ...: Format arguments
- */
-void elog_message(elog_module_t module, elog_level_t level, const char *fmt, ...)
-{
-  if (level < elog_get_module_threshold(module))
-  {
-    return; // Skip log if below module threshold
-  }
-
-  /* Try to acquire mutex if RTOS is ready and mutex exists */
-  bool took_mutex = false;
-  took_mutex = elog_enter_cs();
-
-  va_list args;
-
-  /* Format the message */
-  va_start(args, fmt);
-  vsnprintf(s_message_buffer, sizeof(s_message_buffer), fmt, args);
-  va_end(args);
-
-  /* Send to all subscribers */
-  for (int i = 0; i < s_num_subscribers; i++)
-  {
-    if (level >= s_subscribers[i].threshold)
-    {
-      // printf("[DEBUG] Sending message to subscriber %d.\n", i);
-      s_subscribers[i].fn(module, level, s_message_buffer);
-    }
-  }
-
-  /* Give mutex only if we took it */
-  elog_exit_cs(took_mutex);
-}
-
+#if ENABLE_DEBUG_MESSAGES_WITH_LOCATION
 /**
  * @brief Thread-safe version of log_message_with_location
  * @param level: Severity level of the message
@@ -232,36 +177,121 @@ void elog_message_with_location(elog_module_t module, elog_level_t level, const 
   /* Try to acquire mutex if RTOS is ready and mutex exists */
   bool took_mutex = false;
   took_mutex = elog_enter_cs();
+  memset(s_fmt, 0, sizeof(s_fmt));
+  memset(s_full_message_buffer, 0, sizeof(s_full_message_buffer));
+
+  /* Add location information with color support - ensure null termination */
+  #if ELOG_USE_COLOR
+  const char *colors[] = {
+      [ELOG_LEVEL_TRACE] = LOG_COLOR(LOG_COLOR_BLUE),    /* Blue for trace */
+      [ELOG_LEVEL_DEBUG] = LOG_COLOR(LOG_COLOR_CYAN),    /* Cyan for debug */
+      [ELOG_LEVEL_INFO] = LOG_COLOR(LOG_COLOR_GREEN),    /* Green for info */
+      [ELOG_LEVEL_WARNING] = LOG_COLOR(LOG_COLOR_BROWN), /* Brown/Yellow for warning */
+      [ELOG_LEVEL_ERROR] = LOG_COLOR(LOG_COLOR_RED),     /* Red for error */
+      [ELOG_LEVEL_CRITICAL] = LOG_BOLD(LOG_COLOR_RED),   /* Bold Red for critical */
+      [ELOG_LEVEL_ALWAYS] = LOG_BOLD("37")               /* Bold White for always */
+  };
+
+  const char *color_code = (level >= ELOG_LEVEL_TRACE && level <= ELOG_LEVEL_ALWAYS) ? colors[level] : "";
+  const char *end_color = (level >= ELOG_LEVEL_TRACE && level <= ELOG_LEVEL_ALWAYS) ? LOG_RESET_COLOR : "";
+
+  #else
+  const char *color_code = "";
+  const char *end_color = "";
+  #endif
 
   va_list args;
-  char temp_buffer[ELOG_MAX_MESSAGE_LENGTH - ELOG_MAX_LOCATION_LENGTH]; /* Reserve space for location info */
 
   /* Format the user message first */
   va_start(args, fmt);
-  vsnprintf(temp_buffer, sizeof(temp_buffer), fmt, args);
+  int fmt_len = snprintf(s_fmt, sizeof(s_fmt), 
+                  "%s%s:%u,%lu:[%s][%s][%d] %s%s\n", 
+                    color_code, elog_level_name(level),(uint8_t)module, 
+                  get_runing_nbr(module), file, func, line, fmt, end_color);
+
+  int final_len = vsnprintf(s_full_message_buffer, sizeof(s_full_message_buffer), s_fmt, args);
   va_end(args);
 
-  /* Add location information - ensure null termination */
-  int written = snprintf(s_message_buffer, sizeof(s_message_buffer), "[%s][%s][%d] %s", file, func,
-                         line, temp_buffer);
-  if (written >= (int)sizeof(s_message_buffer))
-  {
-    s_message_buffer[sizeof(s_message_buffer) - 1] = '\0'; /* Ensure null termination */
-  }
+
 
   /* Send to all subscribers */
   for (int i = 0; i < s_num_subscribers; i++)
   {
     if (level >= s_subscribers[i].threshold)
     {
-      s_subscribers[i].fn(module, level, s_message_buffer);
+      if(final_len > 0) { s_subscribers[i].fn(1, s_full_message_buffer, final_len); }
+      else { s_subscribers[i].fn(1, "vsnprintf error!!!", 19); }
     }
   }
 
   /* Give mutex only if we took it */
   elog_exit_cs(took_mutex);
 }
+#else
+/**
+ * @brief Thread-safe version of log_message
+ * @param level: Severity level of the message
+ * @param fmt: Printf-style format string
+ * @param ...: Format arguments
+ */
+void elog_message(elog_module_t module, elog_level_t level, const char *fmt, ...)
+{
+  if (level < elog_get_module_threshold(module))
+  {
+    return; // Skip log if below module threshold
+  }
+  /* Try to acquire mutex if RTOS is ready and mutex exists */
+  bool took_mutex = false;
+  int fmt_len = 0;
+  int final_len = 0;
+  took_mutex = elog_enter_cs();
+  memset(s_fmt, 0, sizeof(s_fmt));
+  memset(s_full_message_buffer, 0, sizeof(s_full_message_buffer));
+  
+  #if ELOG_USE_COLOR
+  /* Color codes for different log levels */
+  const char *colors[] = {
+      [ELOG_LEVEL_TRACE] = LOG_COLOR(LOG_COLOR_BLUE),    /* Blue for trace */
+      [ELOG_LEVEL_INFO] = LOG_COLOR(LOG_COLOR_GREEN),    /* Green for info */
+      [ELOG_LEVEL_DEBUG] = LOG_COLOR(LOG_COLOR_CYAN),    /* Cyan for debug */
+      [ELOG_LEVEL_WARNING] = LOG_COLOR(LOG_COLOR_BROWN), /* Brown/Yellow for warning */
+      [ELOG_LEVEL_ERROR] = LOG_COLOR(LOG_COLOR_RED),     /* Red for error */
+      [ELOG_LEVEL_CRITICAL] = LOG_BOLD(LOG_COLOR_RED),   /* Bold Red for critical */
+      [ELOG_LEVEL_ALWAYS] = LOG_BOLD("37")               /* Bold White for always */
+  };
+  const char *color_code = (level >= ELOG_LEVEL_TRACE && level <= ELOG_LEVEL_ALWAYS) ? colors[level] : "";
+  const char *end_color = (level >= ELOG_LEVEL_TRACE && level <= ELOG_LEVEL_ALWAYS) ? LOG_RESET_COLOR : "";
 
+  #else
+  /* No color*/
+  const char *color_code = "";
+  const char *end_color = "";
+  #endif
+  va_list args;
+  /* Format the message */
+  va_start(args, fmt);
+  fmt_len = snprintf(s_fmt, sizeof(s_fmt), 
+                  "%s%s:%u,%lu: %s%s\n", 
+                    color_code, elog_level_name(level),(uint8_t)module, 
+                  get_runing_nbr(module), fmt, end_color);
+  final_len = vsnprintf(s_full_message_buffer, sizeof(s_full_message_buffer), s_fmt, args);
+  va_end(args); 
+
+  /* Send to all subscribers */
+  for (int i = 0; i < s_num_subscribers; i++)
+  {
+    if (level >= s_subscribers[i].threshold)
+    {
+      // printf("[DEBUG] Sending message to subscriber %d.\n", i);
+      if (final_len > 0) { s_subscribers[i].fn(1, s_full_message_buffer, final_len); }
+      else { s_subscribers[i].fn(1, "vsnprintf error!!!", 19); }
+    }
+  }
+
+  /* Give mutex only if we took it */
+  elog_exit_cs(took_mutex);
+}
+#endif
 /**
  * @brief Thread-safe version of log_subscribe
  * @param fn: Function to call for each log message
