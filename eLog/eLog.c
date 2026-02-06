@@ -204,10 +204,10 @@ void elog_message_with_location(elog_module_t module, elog_level_t level, const 
 
   /* Format the user message first */
   va_start(args, fmt);
-  int fmt_len = snprintf(s_fmt, sizeof(s_fmt), 
-                  "%s%s:%u,%lu:[%s][%s][%d] %s%s\n", 
-                    color_code, elog_level_name(level),(uint8_t)module, 
-                  get_runing_nbr(module), file, func, line, fmt, end_color);
+  snprintf(s_fmt, sizeof(s_fmt), 
+          "%s%s:%u,%lu:[%s][%s][%d] %s%s\n", 
+            color_code, elog_level_name(level),(uint8_t)module, 
+          get_runing_nbr(module), file, func, line, fmt, end_color);
 
   int final_len = vsnprintf(s_full_message_buffer, sizeof(s_full_message_buffer), s_fmt, args);
   va_end(args);

@@ -122,8 +122,8 @@ static inline const char *debug_get_filename(const char *fullpath) {
 
 /* Maximum length of formatted log message */
 #ifndef ELOG_MAX_MESSAGE_LENGTH
-#define ELOG_FULL_MESSAGE_LENGTH 256
-#define ELOG_MAX_MESSAGE_LENGTH 128
+#define ELOG_FULL_MESSAGE_LENGTH 512
+#define ELOG_MAX_MESSAGE_LENGTH 256
 #define ELOG_MAX_LOCATION_LENGTH 64
 #endif
 
