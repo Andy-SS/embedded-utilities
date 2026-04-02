@@ -17,7 +17,6 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
-#include "mutex_common.h"
 
 /* ========================================================================== */
 /* Running number */
@@ -25,6 +24,11 @@ volatile uint32_t s_log_runing_number[ELOG_MD_MAX] = {0};
 
 static uint32_t inline get_runing_nbr(elog_module_t module)
 {
+  if (module >= ELOG_MD_MAX)
+  {
+    return 0;
+  }
+
   // Simple increment - no atomic operations for now to diagnose issue
   return ++s_log_runing_number[module];
 }
@@ -350,6 +354,15 @@ elog_err_t elog_unsubscribe(log_subscriber_t fn)
   {
     if (s_subscribers[i].fn == fn)
     {
+      for (int j = i; j < s_num_subscribers - 1; j++)
+      {
+        s_subscribers[j] = s_subscribers[j + 1];
+      }
+
+      s_num_subscribers--;
+      s_subscribers[s_num_subscribers].fn = NULL;
+      s_subscribers[s_num_subscribers].threshold = ELOG_LEVEL_ALWAYS;
+
       result = ELOG_ERR_NONE;
       break;
     }

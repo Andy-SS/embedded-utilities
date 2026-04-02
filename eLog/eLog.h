@@ -30,6 +30,7 @@
 // /* Default eLog Configuration - Override these in your project if needed */
 #define ELOG_RTOS_TYPE ELOG_RTOS_THREADX
 #define ELOG_MUTEX_TIMEOUT_MS 0 /* Mutex timeout in milliseconds, 0 means no wait */
+#define ELOG_USE_COLOR 0  /* Set to 0 to disable colors in elog_console_subscriber */
 
 // Module list configuration
 typedef enum {
@@ -39,6 +40,8 @@ typedef enum {
   ELOG_MD_BLE_HOST,
   ELOG_MD_BLE_HCI,
   ELOG_MD_BLE_LL,
+  ELOG_MD_BLE_GATT,
+  ELOG_MD_BLE_APP,
   ELOG_MD_SVCCTL,
   ELOG_MD_P2P_SERVER,
   ELOG_MD_BLE_TIMER,
@@ -49,10 +52,14 @@ typedef enum {
   ELOG_MD_BPKA,
   ELOG_MD_AMM,
   ELOG_MD_TEMPMEAS,
-  ELOG_MD_TASK_A,
-  ELOG_MD_TASK_B,
-  ELOG_MD_TASK_C,
-  ELOG_MD_COMM,
+  ELOG_MD_TX,
+  ELOG_MD_HW_PMIC,
+  ELOG_MD_HW_GPIO,
+  ELOG_MD_HW_I2C,
+  ELOG_MD_HW_SPI,
+  ELOG_MD_HW_CURRENT_SENSE,
+  ELOG_MD_HW_LCD,
+  ELOG_MD_APP_PD,
   ELOG_MD_MAX
 } elog_module_t;
 
@@ -85,7 +92,7 @@ static inline const char *debug_get_filename(const char *fullpath) {
 }
 
 /* Debug Configuration - Modify these for different build types */
-#define ELOG_DEBUG_INFO_ON YES      /* Information messages (GREEN) */
+#define ELOG_DEBUG_INFO_ON NO      /* Information messages (GREEN) */
 #define ELOG_DEBUG_WARN_ON YES      /* Warning messages (BROWN) */
 #define ELOG_DEBUG_ERR_ON  YES      /* Error messages (RED) */
 #define ELOG_DEBUG_LOG_ON  YES      /* Debug messages (CYAN) */
@@ -94,7 +101,7 @@ static inline const char *debug_get_filename(const char *fullpath) {
 #define ELOG_DEBUG_ALWAYS_ON YES    /* Always logged messages (WHITE BOLD) */
 
 /* Filename Support Configuration */
-#define ENABLE_DEBUG_MESSAGES_WITH_LOCATION 1
+#define ENABLE_DEBUG_MESSAGES_WITH_LOCATION 0
 
 /* Auto-calculate the lowest enabled log level for enhanced logging */
 #if (ELOG_DEBUG_TRACE_ON == YES)
